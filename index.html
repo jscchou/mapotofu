@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Mapo Tofu, Maybe</title>
+    <link rel="stylesheet" href="/src/styles/main.css" />
+  </head>
+  <body>
+    <div id="app"></div>
+    <div id="permission-ui" class="overlay-ui hidden">
+      <div class="overlay-card">
+        <h2>Camera access needed</h2>
+        <p id="permission-message">
+          This game uses your webcam to track your hand.<br />
+          Please allow camera access in your browser.
+        </p>
+        <button id="permission-retry">Try again</button>
+      </div>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

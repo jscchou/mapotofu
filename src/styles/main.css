@@ -1,0 +1,134 @@
+:root {
+  --bg: #faf8f4;
+  --ink: #2a2a2a;
+  --muted: #6f6a62;
+  --panel: #e8e5e0;
+  --panel-dim: #d8d3cc;
+  --panel-hover: #c7beb0;
+  --accent: #d96a3a;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  width: 100%;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas,
+    monospace;
+  overflow: hidden;
+}
+
+#app {
+  position: absolute;
+  inset: 0;
+}
+
+#app canvas {
+  display: block;
+}
+
+.overlay-ui {
+  position: fixed;
+  inset: 0;
+  background: rgba(250, 248, 244, 0.92);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.overlay-ui.hidden {
+  display: none;
+}
+
+.overlay-card {
+  background: #fff;
+  border: 1px solid var(--panel);
+  border-radius: 12px;
+  padding: 28px 32px;
+  max-width: 420px;
+  text-align: center;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.06);
+}
+
+.overlay-card h2 {
+  margin: 0 0 10px;
+  font-weight: 500;
+  font-size: 20px;
+}
+
+.overlay-card p {
+  margin: 0 0 18px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.overlay-card button {
+  font-family: inherit;
+  font-size: 14px;
+  padding: 10px 22px;
+  border-radius: 999px;
+  border: none;
+  background: var(--panel-dim);
+  color: var(--ink);
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.overlay-card button:hover {
+  background: var(--panel-hover);
+}
+
+.debug-overlay {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 500;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  pointer-events: none;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--ink);
+}
+
+.debug-panel {
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(4px);
+  border: 1px solid var(--panel);
+  border-radius: 8px;
+  padding: 8px 10px;
+  min-width: 180px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.05);
+}
+
+.debug-panel .row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.debug-panel .row span:first-child {
+  color: var(--muted);
+}
+
+.debug-preview {
+  background: #000;
+  border: 1px solid var(--panel);
+  border-radius: 8px;
+  opacity: 0.85;
+}
+
+.debug-overlay.hidden {
+  display: none;
+}

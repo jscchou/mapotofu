@@ -1,12 +1,13 @@
 import { Application, Container, Graphics, BlurFilter } from "pixi.js";
 import { StartScene } from "./scenes/StartScene.js";
-import { MainScene } from "./scenes/MainScene.js";
+import { IntroScene } from "./scenes/IntroScene.js";
+import { IngredientScene } from "./scenes/IngredientScene.js";
 import { HandTracker } from "./tracking/HandTracker.js";
 import { OneEuroFilter } from "./tracking/OneEuroFilter.js";
 import { GestureDetector } from "./tracking/GestureDetector.js";
+import { PointerManager } from "./input/PointerManager.js";
 import { DebugOverlay } from "./ui/DebugOverlay.js";
 
-const BG_COLOR = 0xfaf8f4;
 const POINTER_COLOR = 0xd96a3a;
 const PINCH_COLOR = 0x2a9d8f;
 const ONE_EURO_PARAMS = { mincutoff: 1.0, beta: 0.1, dcutoff: 1.0 };
@@ -53,7 +54,6 @@ function makePointer() {
   closed.addChild(ring, dot);
   closed.visible = false;
 
-  // Dwell progress ring — drawn on top; gets a new arc each frame.
   const dwellRing = new Graphics();
   dwellRing.visible = false;
   const DWELL_RADIUS = 34;
@@ -96,7 +96,7 @@ function makePointer() {
 async function boot() {
   const app = new Application();
   await app.init({
-    background: BG_COLOR,
+    backgroundAlpha: 0, // CSS body provides the checkered background
     resizeTo: window,
     antialias: true,
     resolution: window.devicePixelRatio || 1,
@@ -107,31 +107,41 @@ async function boot() {
   const pointer = makePointer();
   const debug = new DebugOverlay({ startVisible: true });
 
+  // -------- input pipeline --------
+  const pointerManager = new PointerManager({
+    onDown: (s) => currentScene?.onPointerDown?.(s),
+    onUp: (s) => currentScene?.onPointerUp?.(s),
+  });
+
   // -------- scene management --------
   let currentScene = null;
 
+  function applyBackground(scene) {
+    document.body.classList.remove("bg-cream", "bg-blue");
+    if (scene?.bgClass) document.body.classList.add(scene.bgClass);
+  }
+
   function setScene(scene) {
-    if (currentScene) {
-      app.stage.removeChild(currentScene.root);
-    }
+    if (currentScene) app.stage.removeChild(currentScene.root);
     currentScene = scene;
     app.stage.addChild(scene.root);
-    // Keep pointer on top of every scene.
+    // pointer stays on top of every scene
     app.stage.removeChild(pointer.container);
     app.stage.addChild(pointer.container);
+    applyBackground(scene);
     scene.resize(app.screen.width, app.screen.height);
   }
 
   const startScene = new StartScene({
-    onStartPressed: () => {
-      setScene(mainScene);
-    },
+    onStartPressed: () => setScene(introScene),
   });
-
-  const mainScene = new MainScene({
-    onContinuePressed: () => {
-      console.log("continue pressed");
-    },
+  const introScene = new IntroScene({
+    onContinuePressed: () => setScene(ingredientScene),
+  });
+  const ingredientScene = new IngredientScene({
+    onBack: () => setScene(introScene),
+    onContinue: () => console.log("continue: ingredients chosen"),
+    onRecipe: () => console.log("would open recipe"),
   });
 
   setScene(startScene);
@@ -140,12 +150,12 @@ async function boot() {
     if (currentScene) currentScene.resize(app.screen.width, app.screen.height);
   });
 
-  // -------- state --------
+  // -------- ticker state --------
   let frameCount = 0;
   let lastFpsSample = performance.now();
   let fps = 0;
 
-  const state = {
+  const handState = {
     hasHand: false,
     raw: null,
     smooth: null,
@@ -158,69 +168,50 @@ async function boot() {
 
   const filterX = new OneEuroFilter(ONE_EURO_PARAMS);
   const filterY = new OneEuroFilter(ONE_EURO_PARAMS);
-
   const gestures = new GestureDetector({
     enterThreshold: PINCH_ENTER,
     exitThreshold: PINCH_EXIT,
-    onPinchStart: (evt) => {
-      state.pinching = true;
-      state.pinchRatio = evt.ratio;
-      pointer.setPinching(true);
-      currentScene?.onPinchStart?.(evt);
-    },
-    onPinchMove: (evt) => {
-      state.pinchRatio = evt.ratio;
-      currentScene?.onPinchMove?.(evt);
-    },
-    onPinchEnd: (evt) => {
-      state.pinching = false;
-      state.pinchRatio = evt.ratio;
-      pointer.setPinching(false);
-      currentScene?.onPinchEnd?.(evt);
-    },
-    onThreeFingerStart: (evt) => {
-      state.threeFinger = true;
-      currentScene?.onThreeFingerStart?.(evt);
-    },
-    onThreeFingerEnd: (evt) => {
-      state.threeFinger = false;
-      currentScene?.onThreeFingerEnd?.(evt);
-    },
   });
 
   const tracker = new HandTracker({
     onHandDetected: ({ landmarks, confidence, timestamp }) => {
       const tip = landmarks[8];
-      const mirroredX = 1 - tip.x; // selfie-view mirror
+      const mirroredX = 1 - tip.x;
       const canvasW = app.screen.width;
       const canvasH = app.screen.height;
-
       const rawPx = { x: mirroredX * canvasW, y: tip.y * canvasH };
       const sx = filterX.filter(rawPx.x, timestamp);
       const sy = filterY.filter(rawPx.y, timestamp);
 
-      state.hasHand = true;
-      state.raw = { x: tip.x, y: tip.y };
-      state.smooth = { x: sx, y: sy };
-      state.confidence = confidence;
-      state.landmarks = landmarks;
+      handState.hasHand = true;
+      handState.raw = { x: tip.x, y: tip.y };
+      handState.smooth = { x: sx, y: sy };
+      handState.confidence = confidence;
+      handState.landmarks = landmarks;
 
       gestures.update(landmarks, { x: sx, y: sy }, confidence);
+      handState.pinching = gestures.isPinching();
+      handState.pinchRatio = gestures.getRatio();
+      handState.threeFinger = gestures.isThreeFinger();
+
+      pointerManager.updateHand({
+        x: sx,
+        y: sy,
+        isDown: handState.pinching,
+        hasHand: true,
+      });
     },
     onHandLost: () => {
-      state.hasHand = false;
-      state.landmarks = null;
-      // Tell scene to drop anything it's holding, then reset smoothing.
+      handState.hasHand = false;
+      handState.landmarks = null;
       gestures.cancel();
-      state.pinching = false;
-      state.threeFinger = false;
-      pointer.setPinching(false);
+      handState.pinching = false;
+      handState.threeFinger = false;
       filterX.reset();
       filterY.reset();
+      pointerManager.updateHand({ hasHand: false });
     },
-    onError: (err) => {
-      console.error("HandTracker error:", err);
-    },
+    onError: (err) => console.error("HandTracker error:", err),
   });
 
   try {
@@ -231,25 +222,27 @@ async function boot() {
     const name = err?.name ?? "";
     if (name === "NotAllowedError" || name === "SecurityError") {
       showPermissionUI(
-        "Camera access was denied. Enable it in your browser's site settings, then click Try again."
+        "Camera access was denied — you can still use the mouse, or enable the camera and reload."
       );
     } else if (name === "NotFoundError" || name === "OverconstrainedError") {
       showPermissionUI(
-        "No camera found. Plug in a webcam or check your camera is not in use, then click Try again."
+        "No camera found — mouse input will still work. Plug in a webcam and reload to enable hand tracking."
       );
     } else {
       showPermissionUI(
-        `Couldn't start the webcam.<br/><small>${err?.message ?? err}</small>`
+        `Couldn't start the webcam — mouse input still works.<br/><small>${
+          err?.message ?? err
+        }</small>`
       );
     }
-    permissionRetry.addEventListener("click", () => {
-      window.location.reload();
-    });
-    return;
+    permissionRetry.addEventListener("click", () => window.location.reload());
+    // Don't return — fall through so mouse input is still wired up.
   }
 
-  debug.setVideo(tracker.video);
-  tracker.start();
+  if (tracker.video) {
+    debug.setVideo(tracker.video);
+    tracker.start();
+  }
 
   app.ticker.add(() => {
     frameCount++;
@@ -260,34 +253,40 @@ async function boot() {
       lastFpsSample = now;
     }
 
-    if (state.hasHand && state.smooth) {
+    const pm = pointerManager.getState();
+
+    // Pixi pointer indicator only when source is hand
+    if (pm.source === "hand" && handState.hasHand && handState.smooth) {
       pointer.setVisible(true);
-      pointer.setPosition(state.smooth.x, state.smooth.y);
-      currentScene?.onPointerMove?.({
-        x: state.smooth.x,
-        y: state.smooth.y,
-        pinching: state.pinching,
-      });
+      pointer.setPosition(handState.smooth.x, handState.smooth.y);
+      pointer.setPinching(handState.pinching);
     } else {
       pointer.setVisible(false);
-      currentScene?.onPointerMove?.({ x: null, y: null, pinching: false });
     }
+
+    currentScene?.onPointerMove?.({
+      x: pm.x,
+      y: pm.y,
+      isDown: pm.isDown,
+      source: pm.source,
+    });
 
     pointer.setDwell(currentScene?.getPointerDwell?.() ?? 0);
 
     const sceneState = currentScene?.getState?.() ?? {};
     debug.update({
       fps,
-      raw: state.raw,
-      smooth: state.smooth,
-      detected: state.hasHand,
-      confidence: state.hasHand ? state.confidence : null,
-      landmarks: state.hasHand ? state.landmarks : null,
-      pinchRatio: state.pinchRatio,
-      pinching: state.pinching,
-      threeFinger: state.threeFinger,
+      raw: handState.raw,
+      smooth: handState.smooth,
+      detected: handState.hasHand,
+      confidence: handState.hasHand ? handState.confidence : null,
+      landmarks: handState.hasHand ? handState.landmarks : null,
+      pinchRatio: handState.pinchRatio,
+      pinching: handState.pinching,
+      threeFinger: handState.threeFinger,
       grabbedId: sceneState.grabbedId ?? null,
       basketCount: sceneState.basketCount ?? 0,
+      pointerSource: pm.source,
     });
   });
 }

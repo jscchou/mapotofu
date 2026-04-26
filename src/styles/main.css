@@ -1,11 +1,15 @@
 :root {
-  --bg: #faf8f4;
+  --bg-cream: #faf6e8;
+  --bg-blue: #e8f1f7;
   --ink: #2a2a2a;
   --muted: #6f6a62;
   --panel: #e8e5e0;
   --panel-dim: #d8d3cc;
   --panel-hover: #c7beb0;
   --accent: #d96a3a;
+  --title-red: #8e1f1f;
+  --pill-yellow: #f4cf3c;
+  --pill-yellow-hover: #ebc02a;
 }
 
 * {
@@ -18,11 +22,23 @@ body {
   padding: 0;
   height: 100%;
   width: 100%;
-  background: var(--bg);
+  background-color: var(--bg-cream);
   color: var(--ink);
   font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas,
     monospace;
   overflow: hidden;
+}
+
+body.bg-cream {
+  background-color: var(--bg-cream);
+  background-image: url("../assets/checkered-cream.svg");
+  background-repeat: repeat;
+}
+
+body.bg-blue {
+  background-color: var(--bg-blue);
+  background-image: url("../assets/checkered-blue.svg");
+  background-repeat: repeat;
 }
 
 #app {

@@ -15,6 +15,7 @@ export class DebugOverlay {
         <div class="row"><span>Pinch ratio</span><span data-k="ratio">--</span></div>
         <div class="row"><span>Pinch state</span><span data-k="pinch">open</span></div>
         <div class="row"><span>3-finger</span><span data-k="three">no</span></div>
+        <div class="row"><span>Pointer src</span><span data-k="src">mouse</span></div>
         <div class="row"><span>Grabbed</span><span data-k="grab">--</span></div>
         <div class="row"><span>Basket</span><span data-k="basket">0</span></div>
       </div>
@@ -56,6 +57,7 @@ export class DebugOverlay {
     threeFinger,
     grabbedId,
     basketCount,
+    pointerSource,
   }) {
     if (!this.visible) return;
 
@@ -75,6 +77,7 @@ export class DebugOverlay {
         : "--";
     this.refs.pinch.textContent = pinching ? "closed" : "open";
     this.refs.three.textContent = threeFinger ? "yes" : "no";
+    this.refs.src.textContent = pointerSource ?? "--";
     this.refs.grab.textContent = grabbedId ?? "--";
     this.refs.basket.textContent = basketCount != null ? `${basketCount}` : "--";
 

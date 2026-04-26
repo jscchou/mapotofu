@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 360" width="360" height="360">
+  <defs>
+    <clipPath id="bk-clip"><circle cx="180" cy="180" r="170"/></clipPath>
+  </defs>
+  <circle cx="180" cy="180" r="172" fill="#E0EBF3" stroke="#A8C2D2" stroke-width="3"/>
+  <g clip-path="url(#bk-clip)" fill="none" stroke="#A8C2D2" stroke-width="2" opacity="0.85">
+    <circle cx="180" cy="180" r="160"/>
+    <circle cx="180" cy="180" r="138"/>
+    <circle cx="180" cy="180" r="116"/>
+    <circle cx="180" cy="180" r="94"/>
+    <circle cx="180" cy="180" r="72"/>
+    <circle cx="180" cy="180" r="50"/>
+    <circle cx="180" cy="180" r="28"/>
+  </g>
+  <g clip-path="url(#bk-clip)" stroke="#A8C2D2" stroke-width="1.5" opacity="0.7">
+    <line x1="180" y1="10" x2="180" y2="350"/>
+    <line x1="10" y1="180" x2="350" y2="180"/>
+    <line x1="60" y1="60" x2="300" y2="300"/>
+    <line x1="300" y1="60" x2="60" y2="300"/>
+  </g>
+</svg>

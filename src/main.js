@@ -2,11 +2,15 @@ import { Application, Container, Graphics, BlurFilter } from "pixi.js";
 import { StartScene } from "./scenes/StartScene.js";
 import { IntroScene } from "./scenes/IntroScene.js";
 import { IngredientScene } from "./scenes/IngredientScene.js";
+import { CookingScene } from "./scenes/CookingScene.js";
+import { CookingAnimationScene } from "./scenes/CookingAnimationScene.js";
+import { NameDishScene } from "./scenes/NameDishScene.js";
 import { HandTracker } from "./tracking/HandTracker.js";
 import { OneEuroFilter } from "./tracking/OneEuroFilter.js";
 import { GestureDetector } from "./tracking/GestureDetector.js";
 import { PointerManager } from "./input/PointerManager.js";
 import { DebugOverlay } from "./ui/DebugOverlay.js";
+import { cookingStore } from "./cooking/cookingStore.js";
 
 const POINTER_COLOR = 0xd96a3a;
 const PINCH_COLOR = 0x2a9d8f;
@@ -93,7 +97,22 @@ function makePointer() {
   };
 }
 
+// ---------- Routes ----------
+
 async function boot() {
+  // Standalone gallery page — no Pixi, no main flow
+  if (window.location.pathname === "/gallery") {
+    const { mountGalleryPage } = await import("./gallery/galleryPage.js");
+    mountGalleryPage(document.body);
+    return;
+  }
+
+  return bootMainApp();
+}
+
+// ---------- Main flow ----------
+
+async function bootMainApp() {
   const app = new Application();
   await app.init({
     backgroundAlpha: 0, // CSS body provides the checkered background
@@ -103,6 +122,14 @@ async function boot() {
     autoDensity: true,
   });
   document.getElementById("app").appendChild(app.canvas);
+
+  // Best-effort: warm up the fonts Pixi will need so first paint isn't fallback.
+  await Promise.all([
+    document.fonts.load('400 1em "Intel One Mono"').catch(() => {}),
+    document.fonts.load('500 1em "Intel One Mono"').catch(() => {}),
+    document.fonts.load('600 1em "Intel One Mono"').catch(() => {}),
+    document.fonts.load('700 1em "Lato"').catch(() => {}),
+  ]);
 
   const pointer = makePointer();
   const debug = new DebugOverlay({ startVisible: true });
@@ -117,37 +144,78 @@ async function boot() {
   let currentScene = null;
 
   function applyBackground(scene) {
-    document.body.classList.remove("bg-cream", "bg-blue");
+    document.body.classList.remove("bg-cream", "bg-blue", "bg-white");
     if (scene?.bgClass) document.body.classList.add(scene.bgClass);
   }
 
   function setScene(scene) {
-    if (currentScene) app.stage.removeChild(currentScene.root);
+    if (currentScene) {
+      currentScene.onExit?.();
+      app.stage.removeChild(currentScene.root);
+    }
     currentScene = scene;
     app.stage.addChild(scene.root);
     // pointer stays on top of every scene
     app.stage.removeChild(pointer.container);
     app.stage.addChild(pointer.container);
     applyBackground(scene);
-    scene.resize(app.screen.width, app.screen.height);
+    scene.resize(window.innerWidth, window.innerHeight);
+    scene.onEnter?.();
   }
 
+  // ---- Build scenes ----
+  // Note: order matters because forward-references use the variables
+  // declared after this block via closure inside callbacks.
+
   const startScene = new StartScene({
-    onStartPressed: () => setScene(introScene),
+    onStartPressed: () => {
+      // Fresh run: clear cooking + dish state
+      cookingStore.reset();
+      setScene(introScene);
+    },
   });
+
   const introScene = new IntroScene({
     onContinuePressed: () => setScene(ingredientScene),
   });
+
   const ingredientScene = new IngredientScene({
     onBack: () => setScene(introScene),
-    onContinue: () => console.log("continue: ingredients chosen"),
+    onContinue: () => {
+      // Hand off the basket selection to the cooking store
+      const picked = ingredientScene.getBasketContents();
+      cookingStore.setSelectedIngredients(picked);
+      setScene(cookingScene);
+    },
     onRecipe: () => console.log("would open recipe"),
+  });
+
+  const cookingScene = new CookingScene({
+    onBack: () => setScene(ingredientScene),
+    onCooked: () => setScene(cookingAnimationScene),
+  });
+
+  const cookingAnimationScene = new CookingAnimationScene({
+    onDone: () => setScene(nameDishScene),
+  });
+
+  const nameDishScene = new NameDishScene({
+    onAdded: () => {
+      console.log("dish added to gallery");
+    },
+    onMakeAnother: () => {
+      cookingStore.reset();
+      setScene(startScene);
+    },
   });
 
   setScene(startScene);
 
+  // Use window.innerWidth/innerHeight directly — Pixi's resizeTo:window
+  // queues its renderer resize for the next frame, so app.screen is stale
+  // inside this synchronous listener.
   window.addEventListener("resize", () => {
-    if (currentScene) currentScene.resize(app.screen.width, app.screen.height);
+    if (currentScene) currentScene.resize(window.innerWidth, window.innerHeight);
   });
 
   // -------- ticker state --------
@@ -272,6 +340,9 @@ async function boot() {
     });
 
     pointer.setDwell(currentScene?.getPointerDwell?.() ?? 0);
+
+    // Per-frame scene update (timer, animations, etc.)
+    currentScene?.update?.(now);
 
     const sceneState = currentScene?.getState?.() ?? {};
     debug.update({

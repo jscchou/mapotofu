@@ -1,4 +1,4 @@
-// Generates the "Smart Recipe" text used by Scene 4's card and Scene 6's
+// Generates the "Smart Recipe" text used by Scene 5's card and Scene 7's
 // pre-filled textarea. Single source of truth so the two stay in sync.
 
 function formatMMSS(seconds) {
@@ -50,7 +50,7 @@ export function buildProcessLines(state) {
   return lines;
 }
 
-// Combined block as a single string (used to pre-fill the Scene 6 textarea).
+// Combined block as a single string (used to pre-fill the Scene 7 textarea).
 export function buildRecipeText(state) {
   const ings = buildIngredientLines(state).join("\n");
   const procs = buildProcessLines(state).join("\n");

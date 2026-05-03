@@ -1,5 +1,5 @@
 // In-memory store + subscribe layer over a pluggable adapter.
-// Scene 6 calls addEntry. Scene 7 subscribes for live updates.
+// Scene 7 calls addEntry. Scene 8 subscribes for live updates.
 //
 // All entries (local + remote-via-BroadcastChannel) flow through `notify` so
 // subscribers don't need to care where the entry came from.

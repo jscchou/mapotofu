@@ -7,11 +7,14 @@ import {
   Assets,
   BlurFilter,
 } from "pixi.js";
+import stoveUrl from "../assets/cookware/Stove.png";
 import { cookingStore } from "../cooking/cookingStore.js";
+import { findCookware, STOVE_REF } from "../data/cookware.js";
 
-// Wireframe-only Scene 4. All the visual elements (pot, lid, fire slider,
-// recipe card frame) are deliberately plain shapes + labels so it's clear
-// where real assets should go later.
+// Scene 5 — Cooking Station.
+// Most elements are still wireframe (lid, fire slider, recipe card frame) —
+// drop in real assets later. The "pot" itself is now the stove + the cookware
+// the user picked in Scene 4 (wok fallback if nothing selected).
 
 const CANVAS = { w: 1920, h: 1080 };
 
@@ -141,6 +144,7 @@ export class CookingScene {
   onEnter() {
     this._clearTiles();
     this._buildIngredientTiles();
+    this._loadStoveAndCookware();
     this._onStoreUpdate();
     this._refreshLidVisual();
     this._refreshCookedButton();
@@ -226,7 +230,9 @@ export class CookingScene {
     this.timerText.position.set(TIMER.cx, TIMER.y);
     this.uiLayer.addChild(this.timerText);
 
-    // Pot wireframe (dashed-look rounded rect with thick border + label)
+    // Cooking surface = stove + the cookware the user picked in Scene 4.
+    // Both sprites are children of `this.pot` so existing positioning and
+    // hit-test logic (POT.cx/cy, _inPot, etc.) keeps working.
     this.pot = new Container();
     this.pot.label = "Pot";
     this.pot.position.set(POT.cx, POT.cy);
@@ -237,30 +243,24 @@ export class CookingScene {
     this.potGlow.filters = [new BlurFilter({ strength: 18 })];
     this.potGlow.visible = false;
 
-    this.potBody = new Graphics();
-    this._drawPot();
+    this.stoveSprite = new Sprite();
+    this.stoveSprite.anchor.set(0.5);
+    this.stoveSprite.position.set(0, 30); // bias the stove toward the bottom of the pot box
+    this.stoveSprite.visible = false;
 
-    this.potLabel = new Text({
-      text: "POT",
-      style: new TextStyle({
-        fontFamily: FONT.mono,
-        fontSize: 16,
-        fontWeight: "600",
-        fill: COLORS.muted,
-        letterSpacing: 4,
-      }),
-    });
-    this.potLabel.anchor.set(0.5, 0.5);
-    this.potLabel.position.set(0, POT.h / 2 - 30);
+    this.cookwareSprite = new Sprite();
+    this.cookwareSprite.anchor.set(0.5);
+    this.cookwareSprite.position.set(0, -60); // sit on the upper portion (the burner)
+    this.cookwareSprite.visible = false;
 
     // Layer for ingredient sprites added to the pot (small, scattered).
     this.potItemsLayer = new Container();
 
     this.pot.addChild(
       this.potGlow,
-      this.potBody,
-      this.potItemsLayer,
-      this.potLabel
+      this.stoveSprite,
+      this.cookwareSprite,
+      this.potItemsLayer
     );
 
     // Lid (separate, draggable). Initial position = LID_HOME.
@@ -278,16 +278,67 @@ export class CookingScene {
     this.itemsLayer.addChild(this.pot, this.slider, this.lid);
   }
 
-  _drawPot() {
-    this.potBody
-      .clear()
-      .roundRect(-POT.w / 2, -POT.h / 2, POT.w, POT.h, 28)
-      .fill(COLORS.potFill)
-      .stroke({ color: COLORS.outline, width: 5 });
-    // Suggest a U-shape rim with a thin highlight near the top
-    this.potBody
-      .roundRect(-POT.w / 2 + 14, -POT.h / 2 + 14, POT.w - 28, 16, 8)
-      .stroke({ color: COLORS.outline, width: 2 });
+  async _loadStoveAndCookware() {
+    // Scene 5 sizes the stove smaller than Scene 4's reference. The cookware's
+    // onStove transform was authored against STOVE_REF; we scale it down by
+    // the ratio of our stove dimensions so the composition reads identically.
+    const stoveW5 = POT.w + 20;
+    let stoveH5 = (stoveW5 * STOVE_REF.height) / STOVE_REF.width;
+
+    // Stove
+    try {
+      const stoveTex = await Assets.load(stoveUrl);
+      this.stoveSprite.texture = stoveTex;
+      const aspect =
+        (stoveTex.width || STOVE_REF.width) /
+        (stoveTex.height || STOVE_REF.height);
+      this.stoveSprite.width = stoveW5;
+      this.stoveSprite.height = stoveW5 / aspect;
+      stoveH5 = this.stoveSprite.height;
+      this.stoveSprite.visible = true;
+    } catch (e) {
+      console.warn("CookingScene: stove load failed", e);
+    }
+
+    // Cookware (from store, fallback to wok if nothing was selected)
+    let id = cookingStore.getState().selectedCookware;
+    if (!id) {
+      console.warn("CookingScene: no cookware selected, falling back to wok");
+      id = "wok";
+    }
+    const cw = findCookware(id);
+    if (!cw) return;
+
+    try {
+      const tex = await Assets.load(cw.imagePath);
+      this.cookwareSprite.texture = tex;
+
+      const os = cw.onStove;
+      const wFactor = stoveW5 / STOVE_REF.width;
+      const hFactor = stoveH5 / STOVE_REF.height;
+
+      // Apply rotation + scaled size
+      this.cookwareSprite.width = os.width * wFactor;
+      this.cookwareSprite.height = os.height * wFactor;
+      this.cookwareSprite.rotation = ((os.rotation || 0) * Math.PI) / 180;
+
+      // Cookware center offset from Scene 4 stove top-left, scaled down
+      const offsetX = os.left + os.width / 2 - STOVE_REF.left;
+      const offsetY = os.top + os.height / 2 - STOVE_REF.top;
+
+      // In our pot Container, stove is at child position (0, 30) with anchor
+      // (0.5), so its top-left in pot coords is (-stoveW5/2, 30 - stoveH5/2).
+      const stoveTLx = -stoveW5 / 2;
+      const stoveTLy = 30 - stoveH5 / 2;
+      this.cookwareSprite.position.set(
+        stoveTLx + offsetX * wFactor,
+        stoveTLy + offsetY * hFactor
+      );
+
+      this.cookwareSprite.visible = true;
+    } catch (e) {
+      console.warn(`CookingScene: cookware ${id} load failed`, e);
+    }
   }
 
   _drawLid() {

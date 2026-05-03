@@ -10,7 +10,7 @@ import { cookingStore } from "../cooking/cookingStore.js";
 import { buildRecipeText } from "../cooking/recipeText.js";
 import { galleryStore } from "../gallery/galleryStore.js";
 
-// Scene 6 — Name Your Dish.
+// Scene 7 — Name Your Dish.
 // Pixi handles the dish image at the top + the "Add to Gallery" pill.
 // The form (title input, recipe textarea, note textarea) is a DOM overlay
 // because Pixi has no native text editing — its position is in viewport

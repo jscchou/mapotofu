@@ -4,6 +4,7 @@
 function initialState() {
   return {
     selectedIngredients: [], // from Scene 3 (Continue handoff)
+    selectedCookware: null, // from Scene 4 (cookware id, e.g. "wok")
     potOrder: [], // [{ id, name, t }] in drag order; t = seconds since first drop
     fireHistory: [], // [{ level, t }]
     fireLevel: "off",
@@ -42,6 +43,11 @@ export const cookingStore = {
 
   setSelectedIngredients(items) {
     state.selectedIngredients = Array.isArray(items) ? [...items] : [];
+    notify();
+  },
+
+  setSelectedCookware(id) {
+    state.selectedCookware = id ?? null;
     notify();
   },
 

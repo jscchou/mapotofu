@@ -777,7 +777,7 @@ export class IngredientScene {
 
   // Snapshot of the basket for the cooking store: deduped by id, in the
   // order they were first added. Returns full data records (id/name/imagePath
-  // /hasBakedBackground/category) so Scene 4 can render the same tiles.
+  // /hasBakedBackground/category) so Scene 5 can render the same tiles.
   getBasketContents() {
     const seen = new Set();
     const out = [];

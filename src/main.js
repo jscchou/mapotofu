@@ -2,6 +2,7 @@ import { Application, Container, Graphics, BlurFilter } from "pixi.js";
 import { StartScene } from "./scenes/StartScene.js";
 import { IntroScene } from "./scenes/IntroScene.js";
 import { IngredientScene } from "./scenes/IngredientScene.js";
+import { CookwareScene } from "./scenes/CookwareScene.js";
 import { CookingScene } from "./scenes/CookingScene.js";
 import { CookingAnimationScene } from "./scenes/CookingAnimationScene.js";
 import { NameDishScene } from "./scenes/NameDishScene.js";
@@ -182,16 +183,23 @@ async function bootMainApp() {
   const ingredientScene = new IngredientScene({
     onBack: () => setScene(introScene),
     onContinue: () => {
-      // Hand off the basket selection to the cooking store
+      // Hand off the basket selection to the cooking store, then go pick
+      // a piece of cookware before the cooking station.
       const picked = ingredientScene.getBasketContents();
       cookingStore.setSelectedIngredients(picked);
-      setScene(cookingScene);
+      setScene(cookwareScene);
     },
     onRecipe: () => console.log("would open recipe"),
   });
 
-  const cookingScene = new CookingScene({
+  const cookwareScene = new CookwareScene({
     onBack: () => setScene(ingredientScene),
+    onContinue: () => setScene(cookingScene),
+    onRecipe: () => console.log("would open recipe"),
+  });
+
+  const cookingScene = new CookingScene({
+    onBack: () => setScene(cookwareScene),
     onCooked: () => setScene(cookingAnimationScene),
   });
 

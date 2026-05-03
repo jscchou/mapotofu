@@ -159,7 +159,7 @@ body.bg-white {
 }
 
 /* ============================================================
-   Scene 6 — Name Your Dish: DOM form overlay
+   Scene 7 — Name Your Dish: DOM form overlay
    ============================================================ */
 
 .name-dish-form {
@@ -229,7 +229,7 @@ body.bg-white {
 }
 
 /* ============================================================
-   /gallery — Scene 7 standalone page
+   /gallery — Scene 8 standalone page
    ============================================================ */
 
 body.gallery-page {
@@ -366,7 +366,7 @@ body.gallery-page {
 }
 
 /* ============================================================
-   Scene 6 — Post-add confirmation overlay
+   Scene 7 — Post-add confirmation overlay
    ============================================================ */
 
 .post-add-overlay {

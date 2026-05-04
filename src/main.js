@@ -4,13 +4,15 @@ import { IngredientScene } from "./scenes/IngredientScene.js";
 import { CookwareScene } from "./scenes/CookwareScene.js";
 import { CookingScene } from "./scenes/CookingScene.js";
 import { CookingAnimationScene } from "./scenes/CookingAnimationScene.js";
-import { NameDishScene } from "./scenes/NameDishScene.js";
+import { ResultsScene } from "./scenes/ResultsScene.js";
 import { HandTracker } from "./tracking/HandTracker.js";
 import { OneEuroFilter } from "./tracking/OneEuroFilter.js";
 import { GestureDetector } from "./tracking/GestureDetector.js";
 import { PointerManager } from "./input/PointerManager.js";
 import { DebugOverlay } from "./ui/DebugOverlay.js";
+import { mountAddToCollectionModal } from "./ui/AddToCollectionModal.js";
 import { cookingStore } from "./cooking/cookingStore.js";
+import { ingredients as INGREDIENT_DATA } from "./data/ingredients.js";
 
 const POINTER_COLOR = 0xd96a3a;
 const PINCH_COLOR = 0x2a9d8f;
@@ -97,6 +99,48 @@ function makePointer() {
   };
 }
 
+// Dev helper: prefills the cooking store with sample data so scenes
+// downstream of Scene 3 have something to render when entered directly
+// via `?scene=...&seed=demo`.
+function seedDemoData() {
+  const pickIds = [
+    "soft-tofu-cubes",
+    "peanut-oil",
+    "scallion",
+    "ginger",
+    "chili",
+    "ground-beef",
+  ];
+  const picks = pickIds
+    .map((id) => INGREDIENT_DATA.find((d) => d.id === id))
+    .filter(Boolean);
+
+  cookingStore.reset();
+  cookingStore.setSelectedIngredients(picks);
+  cookingStore.setSelectedCookware("wok");
+
+  // Walk the player's ordered actions
+  const order = [
+    { kind: "ing", id: "peanut-oil" },
+    { kind: "heat", level: 2 },
+    { kind: "ing", id: "ground-beef" },
+    { kind: "ing", id: "ginger" },
+    { kind: "heat", level: 4 },
+    { kind: "ing", id: "soft-tofu-cubes" },
+    { kind: "ing", id: "chili" },
+    { kind: "ing", id: "scallion" },
+  ];
+  for (const step of order) {
+    if (step.kind === "ing") {
+      const data = picks.find((p) => p.id === step.id);
+      if (data) cookingStore.addToPot({ id: data.id, name: data.name });
+    } else if (step.kind === "heat") {
+      cookingStore.setHeatLevel(step.level);
+      cookingStore.logHeatChange(step.level);
+    }
+  }
+}
+
 // ---------- Routes ----------
 
 async function boot() {
@@ -132,11 +176,24 @@ async function bootMainApp() {
   ]);
 
   const pointer = makePointer();
-  const debug = new DebugOverlay({ startVisible: true });
+  // Hidden by default; press 'D' to toggle.
+  const debug = new DebugOverlay({ startVisible: false });
+
+  // While a DOM modal is open, hand-pinch should drive DOM clicks
+  // (close button, Add button, backdrop) instead of going to the scene.
+  // Mouse already drives DOM clicks natively, so only redirect for hand.
+  let activeModal = null;
 
   // -------- input pipeline --------
   const pointerManager = new PointerManager({
-    onDown: (s) => currentScene?.onPointerDown?.(s),
+    onDown: (s) => {
+      if (activeModal && s.source === "hand") {
+        const el = document.elementFromPoint(s.x, s.y);
+        if (el && el.click) el.click();
+        return;
+      }
+      currentScene?.onPointerDown?.(s);
+    },
     onUp: (s) => currentScene?.onPointerUp?.(s),
   });
 
@@ -148,7 +205,8 @@ async function bootMainApp() {
       "bg-cream",
       "bg-blue",
       "bg-white",
-      "bg-nude"
+      "bg-nude",
+      "bg-results"
     );
     if (scene?.bgClass) document.body.classList.add(scene.bgClass);
   }
@@ -200,24 +258,69 @@ async function bootMainApp() {
 
   const cookingScene = new CookingScene({
     onBack: () => setScene(cookwareScene),
-    onCooked: () => setScene(cookingAnimationScene),
+    onDone: () => setScene(cookingAnimationScene),
+    onRecipe: () => console.log("would open recipe"),
   });
 
   const cookingAnimationScene = new CookingAnimationScene({
-    onDone: () => setScene(nameDishScene),
+    onDone: () => setScene(resultsScene),
   });
 
-  const nameDishScene = new NameDishScene({
-    onAdded: () => {
-      console.log("dish added to gallery");
+  const resultsScene = new ResultsScene({
+    onBack: () => setScene(cookingScene),
+    onAddToCollection: () => {
+      if (activeModal) return;
+      activeModal = mountAddToCollectionModal({
+        onClose: () => {
+          activeModal = null;
+        },
+        onAdded: () => {
+          // Modal closes itself after onAdded; the onClose hook clears
+          // activeModal. Nothing else to do here for now.
+        },
+      });
     },
-    onMakeAnother: () => {
-      cookingStore.reset();
-      setScene(startScene);
+    onOpenCollection: () => {
+      window.open("/gallery", "_blank");
     },
   });
 
-  setScene(startScene);
+  // NameDishScene is no longer in the flow — the results scene's
+  // "Add to Collection" modal will replace it. The file stays in
+  // place in case we reuse parts of it.
+
+  // ---- Dev: URL routing + console helper ----
+  // Land on a specific scene with `?scene=NAME` (optionally `&seed=demo`
+  // to fill the cooking store so dependent scenes have content), or
+  // call window.__setScene(NAME) from the browser console.
+  const SCENES_BY_NAME = {
+    start: startScene,
+    ingredient: ingredientScene,
+    cookware: cookwareScene,
+    cooking: cookingScene,
+    animation: cookingAnimationScene,
+    results: resultsScene,
+  };
+  if (typeof window !== "undefined") {
+    window.__scenes = SCENES_BY_NAME;
+    window.__setScene = (name) => {
+      const s = SCENES_BY_NAME[name];
+      if (s) setScene(s);
+      else
+        console.warn(
+          "Unknown scene:",
+          name,
+          "— available:",
+          Object.keys(SCENES_BY_NAME)
+        );
+    };
+    window.__seedDemo = seedDemoData;
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("seed") === "demo") seedDemoData();
+  const requested = params.get("scene");
+  setScene(SCENES_BY_NAME[requested] ?? startScene);
 
   // Use window.innerWidth/innerHeight directly — Pixi's resizeTo:window
   // queues its renderer resize for the next frame, so app.screen is stale

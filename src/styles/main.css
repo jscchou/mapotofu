@@ -58,6 +58,13 @@ body.bg-nude {
   background-repeat: no-repeat;
 }
 
+/* Scene: ResultsScene — base color only; the plaid stripes are drawn
+   in Pixi inside the scene so they scale with the design canvas. */
+body.bg-results {
+  background-color: #fffdee;
+  background-image: none;
+}
+
 #app {
   position: absolute;
   inset: 0;
@@ -476,4 +483,150 @@ body.gallery-page {
 .post-add-overlay .pa-secondary:hover {
   background: rgba(255, 219, 0, 0.32);
   transform: scale(1.04);
+}
+
+/* ============================================================
+   ResultsScene — editable cooking-actions transcription
+   ============================================================ */
+
+.results-transcription {
+  position: absolute;
+  pointer-events: auto;
+  resize: none;
+  background: transparent;
+  border: none;
+  outline: none;
+  padding: 0;
+  font: 500 20px/1.6 "Intel One Mono", "JetBrains Mono", ui-monospace,
+    monospace;
+  letter-spacing: -0.02em;
+  color: #8a5c31;
+  text-align: center;
+}
+
+.results-transcription:focus {
+  /* Subtle focus indicator since we kill the default outline */
+  background: rgba(255, 254, 246, 0.5);
+  border-radius: 6px;
+}
+
+/* ============================================================
+   Add to Collection modal — opens from ResultsScene
+   Sized in 1920×1080 design pixels and scaled to viewport.
+   ============================================================ */
+
+.atc-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 800;
+  font-family: "Intel One Mono", ui-monospace, monospace;
+}
+
+.atc-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.1);
+}
+
+.atc-modal {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform-origin: center center;
+  /* base transform set in JS; scale layered on top */
+  transform: translate(-50%, -50%) scale(1);
+  width: 581px;
+  height: 588px;
+  background: #fffcea;
+  border-radius: 10px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.05);
+  padding: 92px 53px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.atc-close {
+  position: absolute;
+  top: 32px;
+  left: 32px;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background: #ffdb00;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: background 120ms ease, transform 120ms ease;
+}
+.atc-close:hover {
+  background: #ffe633;
+  transform: scale(1.04);
+}
+
+.atc-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.atc-heading {
+  font: 500 24px/1.25 "Intel One Mono", ui-monospace, monospace;
+  letter-spacing: -0.04em;
+  color: #32343a;
+  margin: 0;
+}
+
+.atc-label {
+  font: 500 18px/1.2 "Intel One Mono", ui-monospace, monospace;
+  color: #32343a;
+  margin-top: 2px;
+}
+
+.atc-input {
+  width: 475px;
+  height: 64px;
+  padding: 14px 20px;
+  border: 1px solid #bfc4d7;
+  border-radius: 6px;
+  background: #fff;
+  font: 500 18px/1.2 "Inter", system-ui, sans-serif;
+  color: #000000;
+  outline: none;
+  transition: border-color 120ms ease;
+}
+.atc-input::placeholder {
+  font: 400 18px/1.2 "Inter", system-ui, sans-serif;
+  color: #abadb5;
+}
+.atc-input:focus {
+  border-color: #ffd900;
+}
+
+.atc-add {
+  align-self: center;
+  margin-top: auto;
+  width: 235px;
+  height: 51px;
+  border-radius: 40px;
+  border: none;
+  font: 700 20px/1 "Lato", system-ui, sans-serif;
+  background: #e1e1e1;
+  color: #ffffff;
+  cursor: not-allowed;
+  transition: background 120ms ease, transform 120ms ease, box-shadow 120ms ease;
+}
+
+.atc-add:not(:disabled) {
+  background: #ffdb00;
+  color: #4e2700;
+  cursor: pointer;
+  box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.08);
+}
+.atc-add:not(:disabled):hover {
+  background: #ffe633;
+  transform: scale(1.03);
 }

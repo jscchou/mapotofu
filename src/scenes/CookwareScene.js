@@ -43,7 +43,6 @@ const COLORS = {
   brown: 0x8a5c31,
   bookCream: 0xfffbe4,
   labelBrown: 0x4e2700,
-  gridStripe: 0xe6f7ff,
   arrow: 0x000000,
   startDisabled: 0xe2e2e2,
   startDisabledText: 0xffffff,
@@ -110,6 +109,10 @@ const STOVE_DROP = {
   halfH: STOVE.h / 2,
 };
 
+// Snap target for the dropped cookware — the burner center, in design coords.
+// Cookware bodies should land here; handles extend below per onStove.cy.
+const BURNER = { cx: STOVE_REF.burnerX, cy: STOVE_REF.burnerY };
+
 const HEADLINE = { cx: STOVE.x + STOVE.w / 2, y: 153 };
 const START_BTN = {
   w: 299,
@@ -128,18 +131,6 @@ const RECIPE_BTN = {
   y: 35,
 };
 
-// Same hand-drawn-feel grid as Scene 3 (positions intentionally irregular).
-const STRIPE_HORIZ = [102, 271, 457, 623, 792, 941];
-const STRIPE_VERT = [
-  [128, -439],
-  [359, -419],
-  [612, -382],
-  [904, -396],
-  [1167, -407.57],
-  [1451, -381],
-  [1711, -393],
-];
-
 const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
 
 function pointInRect(px, py, r) {
@@ -147,8 +138,10 @@ function pointInRect(px, py, r) {
 }
 
 export class CookwareScene {
-  static bgClass = "bg-white";
-  bgClass = "bg-white";
+  // bg-blue uses backgroundblue.png with `background-size: cover` so the
+  // checkered pattern fills the viewport at any size — no Pixi-drawn grid.
+  static bgClass = "bg-blue";
+  bgClass = "bg-blue";
 
   constructor({ onBack, onContinue, onRecipe } = {}) {
     this.onBack = onBack ?? (() => {});
@@ -158,13 +151,12 @@ export class CookwareScene {
     this.root = new Container();
     this.root.label = "CookwareScene";
 
-    this.gridLayer = new Container();
+    // No gridLayer — body.bg-blue PNG provides the checkered backdrop.
     this.cardsLayer = new Container();
     this.stoveLayer = new Container();
     this.uiLayer = new Container();
     this.dragLayer = new Container();
     this.root.addChild(
-      this.gridLayer,
       this.cardsLayer,
       this.stoveLayer,
       this.uiLayer,
@@ -179,7 +171,6 @@ export class CookwareScene {
     this._startHovered = false;
     this._recipeHovered = false;
 
-    this._buildBackground();
     this._buildTopBar();
     this._buildHeadline();
     this._buildStove();
@@ -198,31 +189,6 @@ export class CookwareScene {
   onExit() {}
 
   // ---------- build ----------
-
-  _buildBackground() {
-    const base = new Graphics()
-      .rect(0, 0, CANVAS.w, CANVAS.h)
-      .fill(COLORS.white);
-    this.gridLayer.addChild(base);
-
-    for (const y of STRIPE_HORIZ) {
-      const g = new Graphics().rect(0, 0, 1923, 70).fill(COLORS.gridStripe);
-      g.position.set(0, y);
-      this.gridLayer.addChild(g);
-    }
-    const tilt = (89.58 * Math.PI) / 180;
-    for (const [x, y] of STRIPE_VERT) {
-      const g = new Graphics().rect(0, 0, 1923, 70).fill(COLORS.gridStripe);
-      g.position.set(x, y);
-      g.rotation = tilt;
-      this.gridLayer.addChild(g);
-    }
-    const mask = new Graphics()
-      .rect(0, 0, CANVAS.w, CANVAS.h)
-      .fill(COLORS.white);
-    this.gridLayer.addChild(mask);
-    this.gridLayer.mask = mask;
-  }
 
   _buildTopBar() {
     // Back button — yellow circle + black left chevron
@@ -474,9 +440,11 @@ export class CookwareScene {
     if (this._onStoveId) {
       this._showOnStove(this._onStoveId);
       this._dimSourceCard(this._onStoveId);
+      this.headlineText.visible = false;
     } else {
       this.onStoveSprite.visible = false;
       this._restoreAllCards();
+      this.headlineText.visible = true;
     }
     this._drawStartBtn();
   }
@@ -490,11 +458,13 @@ export class CookwareScene {
         this.onStoveSprite.texture = tex;
         this.onStoveSprite.width = os.width;
         this.onStoveSprite.height = os.height;
-        this.onStoveSprite.position.set(
-          os.left + os.width / 2,
-          os.top + os.height / 2
-        );
         this.onStoveSprite.rotation = ((os.rotation || 0) * Math.PI) / 180;
+        // Snap to the burner regardless of where the cursor was at drop —
+        // body sits on the burner, handle hangs below per onStove.cy.
+        this.onStoveSprite.position.set(
+          BURNER.cx + (os.cx ?? 0),
+          BURNER.cy + (os.cy ?? 0)
+        );
         this.onStoveSprite.visible = true;
       })
       .catch(() => {});

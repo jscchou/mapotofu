@@ -32,6 +32,10 @@ export class DebugOverlay {
     });
 
     window.addEventListener("keydown", (e) => {
+      // Don't toggle while the user is typing in a text field
+      const tag = e.target?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || e.target?.isContentEditable)
+        return;
       if (e.key === "d" || e.key === "D") this.toggle();
     });
   }

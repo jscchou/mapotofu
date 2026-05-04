@@ -650,7 +650,10 @@ export class CookingScene {
       Assets.load(ingredient.imagePath)
         .then((tex) => {
           sprite.texture = tex;
-          if (ingredient.hasBakedBackground) {
+          // bakedBackground: 'blue' | 'yellow' | 'none' — anything other
+          // than 'none' means the PNG already has a colored circle baked
+          // in, so let it fill the tile.
+          if (ingredient.bakedBackground && ingredient.bakedBackground !== "none") {
             sprite.width = TILE.size - 8;
             sprite.height = TILE.size - 8;
           } else {

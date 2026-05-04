@@ -6,9 +6,43 @@ import {
   TextStyle,
   Assets,
 } from "pixi.js";
+import staticDishUrl from "../assets/illustrations/MapoTofuillustration.png";
 import { cookingStore } from "../cooking/cookingStore.js";
-import { buildDishPrompt } from "../cooking/dishPromptBuilder.js";
 import { generateDishImage } from "../cooking/imageApi.js";
+import { ingredients as INGREDIENT_DATA } from "../data/ingredients.js";
+
+// Build the request body for /api/generate-dish from the shared store.
+// Walks the pot in drag-order, splits items into the four buckets the
+// server expects (matching the IDs used throughout the game).
+function buildParamsFromStore() {
+  const state = cookingStore.getState();
+  const potOrder = state.potOrder ?? [];
+
+  let tofu_choice = null;
+  let oil_choice = null;
+  const ingredients = [];
+
+  for (const item of potOrder) {
+    const data = INGREDIENT_DATA.find((d) => d.id === item.id);
+    if (!data) continue;
+    if (data.category === "tofu") {
+      // First tofu wins — players can drag multiples but the dish has one.
+      if (!tofu_choice) tofu_choice = item.id;
+    } else if (data.category === "oil") {
+      if (!oil_choice) oil_choice = item.id;
+    } else {
+      // category === "ingredient" — pass through in drag order; allow dupes.
+      ingredients.push(item.id);
+    }
+  }
+
+  return {
+    tofu_choice,
+    oil_choice,
+    ingredients,
+    cookware: state.selectedCookware ?? null,
+  };
+}
 
 const CANVAS = { w: 1920, h: 1080 };
 
@@ -64,16 +98,30 @@ export class CookingAnimationScene {
   onEnter() {
     this._reset();
     this._startGeneration();
+    // Dev shortcut: press R to abort and re-fetch a new dish
+    this._keyHandler = (e) => {
+      if (e.key === "r" || e.key === "R") {
+        console.log("[CookingAnimationScene] R pressed — re-fetching dish");
+        if (this._abort) this._abort.abort();
+        this._reset();
+        this._startGeneration();
+      }
+    };
+    window.addEventListener("keydown", this._keyHandler);
   }
 
   onExit() {
     if (this._abort) this._abort.abort();
     this._abort = null;
+    if (this._keyHandler) {
+      window.removeEventListener("keydown", this._keyHandler);
+      this._keyHandler = null;
+    }
   }
 
   _reset() {
     this._stage = "loading";
-    this.loadingLabel.text = "Cooking…";
+    this.loadingLabel.text = "plating…";
     this.loadingLabel.visible = true;
     this.errorBox.visible = false;
     this.dishHolder.visible = false;
@@ -82,6 +130,7 @@ export class CookingAnimationScene {
     this.potBody.alpha = 1;
     this.potLabel.alpha = 1;
     this.steamLayer.alpha = 1;
+    this.steamLayer.visible = true;
   }
 
   // ---------- build ----------
@@ -201,19 +250,45 @@ export class CookingAnimationScene {
   async _startGeneration() {
     this._stage = "loading";
     this._abort = new AbortController();
-    const prompt = buildDishPrompt(cookingStore.getState());
+
+    // Pull the player's actual choices out of the shared store and pass
+    // them through to the backend. Any field that's null/missing gets a
+    // random fallback on the server side.
+    const params = buildParamsFromStore();
+    console.log("[CookingAnimationScene] sending params:", params);
+
+    let url;
+    try {
+      url = await generateDishImage(params, { signal: this._abort.signal });
+    } catch (e) {
+      if (e?.name === "AbortError") return;
+      console.warn(
+        "[CookingAnimationScene] backend failed, falling back to static dish:",
+        e?.message ?? e
+      );
+      url = staticDishUrl;
+    }
+
+    cookingStore.setDishImage(url);
 
     try {
-      const url = await generateDishImage(prompt, {
-        signal: this._abort.signal,
-      });
-      cookingStore.setDishImage(url);
       const tex = await Assets.load(url);
       this._beginReveal(tex);
     } catch (e) {
       if (e?.name === "AbortError") return;
-      console.error("Image generation failed", e);
-      this._showError(e?.message ?? "Image generation failed.");
+      console.error("Texture load failed:", e);
+      // Last-resort: try the static fallback if we weren't already using it
+      if (url !== staticDishUrl) {
+        try {
+          const tex = await Assets.load(staticDishUrl);
+          cookingStore.setDishImage(staticDishUrl);
+          this._beginReveal(tex);
+          return;
+        } catch (e2) {
+          console.error("Fallback texture load also failed:", e2);
+        }
+      }
+      this._showError(e?.message ?? "Image load failed.");
     }
   }
 
@@ -312,7 +387,7 @@ export class CookingAnimationScene {
     }
     // Pulse loading dots
     const dots = ".".repeat(1 + Math.floor((this._steamPhase * 2) % 3));
-    this.loadingLabel.text = `Cooking${dots}`;
+    this.loadingLabel.text = `plating${dots}`;
   }
 
   // ---------- helpers ----------

@@ -7,7 +7,7 @@ import {
   Assets,
   BlurFilter,
 } from "pixi.js";
-import basketUrl from "../assets/basket-placeholder.svg?url";
+import basketUrl from "../assets/FoodPrepBasket.png";
 import { ingredients as INGREDIENT_DATA } from "../data/ingredients.js";
 
 // ---------- Design canvas ----------
@@ -62,43 +62,34 @@ const OIL_SLOTS = [
   { id: "corn-oil", name: "Corn Oil", x: 490, y: 803 },
 ];
 
-const RIGHT_INGREDIENTS = [
-  ["scallion", "Scallion"],
-  ["ginger", "Ginger"],
-  ["tomato", "Tomato"],
-  ["red-pepper", "Red Pepper"],
-  ["chili", "Chili"],
-  ["ground-beef", "Ground Beef"],
-  ["minced-pork", "Minced Pork"],
-  ["sugar", "Sugar"],
-  ["salt", "Salt"],
-  ["soy-sauce", "Soy Sauce"],
-  ["black-vinegar", "Black Vinegar"],
-  ["starch-water", "Starch Water"],
-  ["pixian-chili-sauce", "Pixian Chili Sauce"],
-  ["szechuan-pepper-powder", "Szechuan Pepper Powder"],
-  ["shaoxing-cooking-wine", "Shaoxing Cooking Wine"],
-  ["fermented-black-bean", "Fermented Black Bean"],
-];
-
+// Right-panel grid is data-driven now: every entry in the data file with
+// category === "ingredient" becomes a slot, in file order, 4 columns wide.
 const RIGHT_COLS = [1271, 1421, 1571, 1721];
-const RIGHT_ROWS = [214, 406, 598, 790];
+const RIGHT_FIRST_ROW_Y = 214;
+const RIGHT_ROW_PITCH = 192;
 
-const RIGHT_SLOTS = RIGHT_INGREDIENTS.map(([id, name], i) => ({
-  id,
-  name,
+const RIGHT_SLOTS = INGREDIENT_DATA.filter(
+  (d) => d.category === "ingredient"
+).map((d, i) => ({
+  id: d.id,
+  name: d.name,
   x: RIGHT_COLS[i % 4],
-  y: RIGHT_ROWS[Math.floor(i / 4)],
+  y: RIGHT_FIRST_ROW_Y + Math.floor(i / 4) * RIGHT_ROW_PITCH,
 }));
 
-// Basket bounding box (centered horizontally between panels)
+// Basket bounding box (centered horizontally between panels). The
+// FoodPrepBasket asset is square; size is per the new spec — 688×688
+// at left:617, top:238 in 1920×1080 design canvas → center (961, 582).
 const BASKET = {
-  w: 691,
-  h: 662,
-  cx: CANVAS.w / 2,
-  cy: 253 + 662 / 2,
-  radius: 280, // hit-test radius (smaller than visible bounds for nicer feel)
+  w: 688,
+  h: 688,
+  cx: CANVAS.w / 2, // ≈ 961 — Figma says 961, design canvas is 1920 wide
+  cy: 582,
+  radius: 344, // matches the full 688px diameter for drop hit-testing
 };
+
+// Mini-tile inside the basket when an ingredient is dropped.
+const BASKET_ITEM = { size: 60 };
 
 // ---------- Helpers ----------
 
@@ -127,8 +118,8 @@ function dataFor(id) {
 // ---------- Scene ----------
 
 export class IngredientScene {
-  static bgClass = "bg-white";
-  bgClass = "bg-white";
+  static bgClass = "bg-nude";
+  bgClass = "bg-nude";
 
   constructor({ onBack, onContinue, onRecipe } = {}) {
     this.onBack = onBack ?? (() => {});
@@ -138,15 +129,14 @@ export class IngredientScene {
     this.root = new Container();
     this.root.label = "IngredientScene";
 
-    // Layers (rendered bottom → top)
-    this.gridLayer = new Container();
+    // Layers (rendered bottom → top). The body's BackgroundNude.png shows
+    // through the transparent Pixi canvas; no gridLayer needed anymore.
     this.basketLayer = new Container();
     this.panelsLayer = new Container();
     this.tilesLayer = new Container();
     this.uiLayer = new Container();
     this.dragLayer = new Container();
     this.root.addChild(
-      this.gridLayer,
       this.basketLayer,
       this.panelsLayer,
       this.tilesLayer,
@@ -164,7 +154,6 @@ export class IngredientScene {
     this._continueHovered = false;
     this._basketActive = false;
 
-    this._buildGrid();
     this._buildPanels();
     this._buildBasket();
     this._buildTiles();
@@ -175,51 +164,9 @@ export class IngredientScene {
     this._updateContinueState();
   }
 
-  // ---------- Build: grid ----------
-
-  _buildGrid() {
-    // White base
-    const base = new Graphics()
-      .rect(0, 0, CANVAS.w, CANVAS.h)
-      .fill(COLORS.white);
-    this.gridLayer.addChild(base);
-
-    // Stripes (1923 × 70 each)
-    const horizTops = [102, 271, 457, 623, 792, 941];
-    for (const y of horizTops) {
-      const g = new Graphics()
-        .rect(0, 0, 1923, 70)
-        .fill(COLORS.gridStripe);
-      g.position.set(0, y);
-      this.gridLayer.addChild(g);
-    }
-
-    const vert = [
-      [128, -439],
-      [359, -419],
-      [612, -382],
-      [904, -396],
-      [1167, -407.57],
-      [1451, -381],
-      [1711, -393],
-    ];
-    const tilt = (89.58 * Math.PI) / 180;
-    for (const [x, y] of vert) {
-      const g = new Graphics()
-        .rect(0, 0, 1923, 70)
-        .fill(COLORS.gridStripe);
-      g.position.set(x, y);
-      g.rotation = tilt;
-      this.gridLayer.addChild(g);
-    }
-
-    // Mask the grid so stripes don't bleed past the canvas (overflow:hidden)
-    const mask = new Graphics()
-      .rect(0, 0, CANVAS.w, CANVAS.h)
-      .fill(COLORS.white);
-    this.gridLayer.addChild(mask);
-    this.gridLayer.mask = mask;
-  }
+  // ---------- Lifecycle ----------
+  onEnter() {}
+  onExit() {}
 
   // ---------- Build: panels ----------
 
@@ -358,15 +305,9 @@ export class IngredientScene {
       tileRadius: BASE_TILE.radius,
       labelStyle: { fontSize: 16, lineHeight: 22, letterSpacing: 0 },
       labelAlign: "left",
-      hasBakedBackground: data?.hasBakedBackground ?? false,
+      bakedBackground: data?.bakedBackground ?? "none",
       imagePath: data?.imagePath ?? null,
-      // Sprite sizing rules:
-      //   - Tofu (baked-bg): 120×120 centered (per spec)
-      //   - Oil: 50×134.5, vertically + horizontally centered (per spec)
-      spriteSize:
-        category === "oil"
-          ? { w: 50, h: 134.5, fit: "fixed" }
-          : { w: 120, h: 120, fit: "fixed" },
+      parent: this.tilesLayer,
     });
     this.tiles.set(slot.id, tile);
   }
@@ -384,10 +325,9 @@ export class IngredientScene {
       tileRadius: RIGHT_TILE.radius,
       labelStyle,
       labelAlign: "center",
-      hasBakedBackground: data?.hasBakedBackground ?? false,
+      bakedBackground: data?.bakedBackground ?? "none",
       imagePath: data?.imagePath ?? null,
-      // Right tiles: fit PNG within ~100×100 box, preserve aspect ratio
-      spriteSize: { w: 100, h: 100, fit: "contain" },
+      parent: this.tilesLayer,
     });
     this.tiles.set(slot.id, tile);
   }
@@ -402,28 +342,27 @@ export class IngredientScene {
     tileRadius,
     labelStyle,
     labelAlign,
-    hasBakedBackground,
+    bakedBackground,
     imagePath,
-    spriteSize,
+    parent,
   }) {
     const c = new Container();
     c.label = `Tile:${id}`;
     c.position.set(x, y);
 
-    // Tile bg: transparent fill + yellow border
+    // Yellow-bordered rounded-rect frame, transparent fill — the panel's
+    // cream backdrop shows through, per the new design.
     const bg = new Graphics()
       .roundRect(0, 0, tileSize, tileSize, tileRadius)
       .stroke({ color: COLORS.cardBorder, width: 1 });
     c.addChild(bg);
 
-    // Sprite (centered in tile)
     const sprite = new Sprite();
     sprite.anchor.set(0.5);
     sprite.position.set(tileSize / 2, tileSize / 2);
     sprite.visible = false;
     c.addChild(sprite);
 
-    // Label below tile
     const label = new Text({
       text: name,
       style: new TextStyle({
@@ -447,7 +386,29 @@ export class IngredientScene {
     }
     c.addChild(label);
 
-    this.tilesLayer.addChild(c);
+    // Selected-state badge — green disc + check, top-right corner. Hidden
+    // until the player actually drops this tile into the basket.
+    const badge = new Container();
+    const badgeBg = new Graphics()
+      .circle(tileSize - 16, 16, 12)
+      .fill(0x4a8a4a)
+      .stroke({ color: 0xffffff, width: 2 });
+    const badgeText = new Text({
+      text: "✓",
+      style: new TextStyle({
+        fontFamily: FONT.lato,
+        fontSize: 14,
+        fontWeight: "700",
+        fill: 0xffffff,
+      }),
+    });
+    badgeText.anchor.set(0.5);
+    badgeText.position.set(tileSize - 16, 16);
+    badge.addChild(badgeBg, badgeText);
+    badge.visible = false;
+    c.addChild(badge);
+
+    (parent ?? this.tilesLayer).addChild(c);
 
     const tile = {
       id,
@@ -457,12 +418,13 @@ export class IngredientScene {
       bg,
       sprite,
       label,
+      badge,
       origin: { x, y },
       size: tileSize,
       hasAsset: !!imagePath,
-      hasBakedBackground,
+      bakedBackground,
       imagePath,
-      spriteSize,
+      selected: false,
     };
 
     if (imagePath) {
@@ -480,24 +442,39 @@ export class IngredientScene {
     return tile;
   }
 
+  // Sprite bounding box per tile type:
+  //   Base (160) → ~120 (75% of tile)
+  //   Right-panel (130) → ~104 (80% of tile)
+  // Aspect ratio is always preserved so tall bottles read correctly.
   _sizeTileSprite(tile) {
-    const { sprite, spriteSize } = tile;
-    if (spriteSize.fit === "fixed") {
-      sprite.width = spriteSize.w;
-      sprite.height = spriteSize.h;
-      return;
-    }
-    // contain
+    const { sprite, size } = tile;
+    const max = size === 160 ? 120 : size * 0.8;
     const tex = sprite.texture;
     const tw = tex?.width || 1;
     const th = tex?.height || 1;
     const ratio = tw / th;
-    if (ratio >= spriteSize.w / spriteSize.h) {
-      sprite.width = spriteSize.w;
-      sprite.height = spriteSize.w / ratio;
+    if (ratio >= 1) {
+      sprite.width = max;
+      sprite.height = max / ratio;
     } else {
-      sprite.height = spriteSize.h;
-      sprite.width = spriteSize.h * ratio;
+      sprite.height = max;
+      sprite.width = max * ratio;
+    }
+  }
+
+  _setTileSelected(tile, selected) {
+    if (tile.selected === selected) return;
+    tile.selected = selected;
+    tile.badge.visible = selected;
+    tile.container.alpha = selected ? 0.55 : 1;
+  }
+
+  // Re-evaluate tile selection from the basket. Called whenever the
+  // basket changes so visual marks always reflect what's been added.
+  _refreshSelectedTiles() {
+    const inBasket = new Set(this.basketItems.map((it) => it.id));
+    for (const tile of this.tiles.values()) {
+      this._setTileSelected(tile, inBasket.has(tile.id));
     }
   }
 
@@ -777,7 +754,7 @@ export class IngredientScene {
 
   // Snapshot of the basket for the cooking store: deduped by id, in the
   // order they were first added. Returns full data records (id/name/imagePath
-  // /hasBakedBackground/category) so Scene 5 can render the same tiles.
+  // /bakedBackground/category) so Scene 5 can render the same tiles.
   getBasketContents() {
     const seen = new Set();
     const out = [];
@@ -829,9 +806,26 @@ export class IngredientScene {
   }
 
   _addToBasket(tile, ghost) {
-    // Pick a scattered spot inside the basket (relative to basket center)
+    // Mutex on tofu/oil — validation requires exactly one of each, so a
+    // new drop in those categories replaces any prior one in the basket.
+    if (tile.category === "tofu" || tile.category === "oil") {
+      for (let i = this.basketItems.length - 1; i >= 0; i--) {
+        const existing = this.basketItems[i];
+        const existingTile = this.tiles.get(existing.id);
+        if (existingTile && existingTile.category === tile.category) {
+          existing.sprite.parent?.removeChild(existing.sprite);
+          existing.sprite.destroy({ children: true });
+          this.basketItems.splice(i, 1);
+        }
+      }
+    }
+
+    // Pick a scattered spot inside the basket interior (relative to center).
+    // Inner scatter radius is roughly half the basket diameter minus a margin
+    // so mini-tiles don't poke out through the woven rim.
+    const scatterMax = BASKET.radius - BASKET_ITEM.size / 2 - 14;
     const angle = Math.random() * Math.PI * 2;
-    const r = Math.sqrt(Math.random()) * 220;
+    const r = Math.sqrt(Math.random()) * scatterMax;
     const offX = Math.cos(angle) * r;
     const offY = Math.sin(angle) * r;
     const target = {
@@ -840,17 +834,15 @@ export class IngredientScene {
     };
     const from = { x: ghost.x, y: ghost.y };
 
-    // Spawn the persistent basket item now (hidden until drop animation lands)
-    const tex = tile.sprite.texture;
-    const item = new Sprite(tex);
-    item.anchor.set(0.5);
-    item.width = Math.min(80, tile.sprite.width * 0.7);
-    item.height = Math.min(80, tile.sprite.height * 0.7);
+    // Build a small mini-tile (just the sprite, no border or tint disc —
+    // the basket already provides its own visual frame).
+    const item = this._makeBasketMiniTile(tile);
     item.position.set(offX, offY);
     item.alpha = 0;
     this.basketItemsLayer.addChild(item);
     this.basketItems.push({ id: tile.id, sprite: item });
 
+    this._refreshSelectedTiles();
     this._updateContinueState();
 
     // Tween + scale pulse
@@ -877,6 +869,30 @@ export class IngredientScene {
       }
     };
     requestAnimationFrame(step);
+  }
+
+  // Small sprite shown inside the basket once an ingredient is dropped.
+  // The basket image already provides the visual frame, so we don't draw
+  // a border or background — just the PNG, aspect-preserved, fitting in
+  // a BASKET_ITEM.size box.
+  _makeBasketMiniTile(tile) {
+    const c = new Container();
+    const size = BASKET_ITEM.size;
+    const tex = tile.sprite.texture;
+    const sp = new Sprite(tex);
+    sp.anchor.set(0.5);
+    const tw = tex?.width || 1;
+    const th = tex?.height || 1;
+    const ratio = tw / th;
+    if (ratio >= 1) {
+      sp.width = size;
+      sp.height = size / ratio;
+    } else {
+      sp.height = size;
+      sp.width = size * ratio;
+    }
+    c.addChild(sp);
+    return c;
   }
 
   _tween(target, from, to, dur, onDone) {
@@ -943,6 +959,7 @@ export class IngredientScene {
     const dy = y - container.y;
     return Math.hypot(dx, dy) <= radius;
   }
+
 
   _inRecipeBtn(x, y) {
     // Bounding rect ~ 290×44 starting at (1564, 50)

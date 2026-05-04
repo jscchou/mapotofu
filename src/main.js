@@ -1,6 +1,5 @@
 import { Application, Container, Graphics, BlurFilter } from "pixi.js";
 import { StartScene } from "./scenes/StartScene.js";
-import { IntroScene } from "./scenes/IntroScene.js";
 import { IngredientScene } from "./scenes/IngredientScene.js";
 import { CookwareScene } from "./scenes/CookwareScene.js";
 import { CookingScene } from "./scenes/CookingScene.js";
@@ -145,7 +144,12 @@ async function bootMainApp() {
   let currentScene = null;
 
   function applyBackground(scene) {
-    document.body.classList.remove("bg-cream", "bg-blue", "bg-white");
+    document.body.classList.remove(
+      "bg-cream",
+      "bg-blue",
+      "bg-white",
+      "bg-nude"
+    );
     if (scene?.bgClass) document.body.classList.add(scene.bgClass);
   }
 
@@ -172,16 +176,12 @@ async function bootMainApp() {
     onStartPressed: () => {
       // Fresh run: clear cooking + dish state
       cookingStore.reset();
-      setScene(introScene);
+      setScene(ingredientScene);
     },
   });
 
-  const introScene = new IntroScene({
-    onContinuePressed: () => setScene(ingredientScene),
-  });
-
   const ingredientScene = new IngredientScene({
-    onBack: () => setScene(introScene),
+    onBack: () => setScene(startScene),
     onContinue: () => {
       // Hand off the basket selection to the cooking store, then go pick
       // a piece of cookware before the cooking station.

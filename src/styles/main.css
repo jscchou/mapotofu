@@ -50,6 +50,14 @@ body.bg-white {
   background-image: none;
 }
 
+body.bg-nude {
+  background-color: #f4eee0;
+  background-image: url("../assets/backgrounds/BackgroundNude.png");
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
 #app {
   position: absolute;
   inset: 0;

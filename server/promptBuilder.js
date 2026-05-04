@@ -1,10 +1,10 @@
-// Client-side mirror of /server/promptBuilder.js.
-// The server is what actually builds the prompt for the Gemini call — this
-// module exists so other client code (debug overlays, future preview UI)
-// can read the same lookup tables without duplicating phrase copy.
+// Four-layer prompt builder for the Gemini dish-image call.
+// Lookup tables, NOT raw value interpolation — that way the model sees
+// rich descriptive language instead of e.g. raw IDs.
 //
-// IMPORTANT: keep this file byte-for-byte aligned with the server version.
-// If you edit a phrase here, edit it in /server/promptBuilder.js too.
+// IMPORTANT: keep this file in sync with /src/cooking/dishPromptBuilder.js.
+// Same lookup tables, same template, same ID convention (kebab-case, the
+// same IDs the game uses for ingredients + cookware).
 
 const STYLE_ANCHOR =
   "Hand-painted gouache illustration, slightly textured paper grain, soft natural daylight, retro 1970s Japanese cookbook aesthetic, saturated but not garish.";
@@ -12,6 +12,8 @@ const STYLE_ANCHOR =
 const COMPOSITION =
   "Top-down 90° overhead shot, single dish centered in frame, isolated on a fully transparent background with no surface, no shadow, no other objects, PNG with alpha channel.";
 
+// All keys below match the game's actual IDs (see /src/data/ingredients.js
+// and /src/data/cookware.js).
 export const cookware_phrases = {
   wok: "blackened cast-iron wok",
   "frying-pan": "well-seasoned cast-iron frying pan",
@@ -32,6 +34,10 @@ export const oil_phrases = {
   "corn-oil": "neutral corn oil",
 };
 
+// Garnish descriptions for everything the player can add. `null` = base
+// ingredient that doesn't need a visible callout (e.g. salt, sugar). Items
+// not in this map are silently dropped from the garnish line — that's how
+// tofu and oil entries get filtered out when `ingredients` includes them.
 export const garnish_phrases = {
   scallion: "finely sliced scallion greens",
   ginger: "thin slivers of fresh ginger",
@@ -53,11 +59,7 @@ export function buildPrompt({
   ingredients,
   cookware,
 }) {
-  const cookware_phrase = pick(
-    cookware_phrases,
-    cookware,
-    cookware_phrases.wok
-  );
+  const cookware_phrase = pick(cookware_phrases, cookware, cookware_phrases.wok);
   const tofu_phrase = pick(
     tofu_phrases,
     tofu_choice,

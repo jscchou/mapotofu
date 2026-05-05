@@ -10,6 +10,8 @@ import {
 import stoveUrl from "../assets/cookware/Stove.png";
 import { cookingStore } from "../cooking/cookingStore.js";
 import { findCookware, STOVE_REF } from "../data/cookware.js";
+import { HandButtonDwell } from "../input/HandButtonDwell.js";
+import { HandHoverPicker } from "../input/HandHoverPicker.js";
 
 // Scene 5 — Cookstation.
 //
@@ -195,6 +197,47 @@ export class CookingScene {
     this._buildHeatSlider();
     this._buildRecipeLogContainer();
     this._buildDoneButton();
+
+    // Hand-hover-to-press for every clickable button. Tile drag uses
+    // the fist gesture; the heat slider uses pinch — both are gated in
+    // onPointerDown via gestureType, not here.
+    this.buttons = new HandButtonDwell();
+    this.buttons.register(
+      "back",
+      (x, y) => this._inCircle(x, y, this.backBtn, 32),
+      () => this.onBack()
+    );
+    this.buttons.register(
+      "recipe",
+      (x, y) => this._inRecipeBtn(x, y),
+      () => this.onRecipe()
+    );
+    this.buttons.register(
+      "done",
+      (x, y) => this._inDoneBtn(x, y),
+      () => this.onDone()
+    );
+
+    // Hover-to-pick for ingredient tiles.
+    this.tilePicker = new HandHoverPicker({
+      getHoveredTarget: (x, y) => {
+        const tile = this._tileAt(x, y);
+        if (!tile || !tile.hasAsset || !tile.sprite.texture) return null;
+        return tile;
+      },
+      onPick: (tile, x, y) => this._grabIngredient(tile, x, y, "hand"),
+    });
+
+    // Hover-and-wait over a heat-level step for 1 s sets that level —
+    // same dwell mechanic as buttons and tile-pick. Pinch and mouse
+    // drag still work (handled in onPointerDown).
+    this.heatPicker = new HandHoverPicker({
+      getHoveredTarget: (x, y) => {
+        if (!this._inHeatRegion(x, y)) return null;
+        return this._heatLevelFromX(x); // 0..5
+      },
+      onPick: (level) => this._applyHeatLevel(level),
+    });
   }
 
   // ---------- lifecycle ----------
@@ -220,6 +263,11 @@ export class CookingScene {
       clearTimeout(this._heatLogTimer);
       this._heatLogTimer = null;
     }
+  }
+
+  setRecipeOpen(open) {
+    if (!this.recipeLabel) return;
+    this.recipeLabel.text = open ? "Hide Recipe" : "Traditional Recipe";
   }
 
   // ---------- panels ----------
@@ -324,7 +372,7 @@ export class CookingScene {
     const icon = this._makeRecipeIcon();
     icon.position.set(-RECIPE_BTN.w / 2 + 38, 0);
 
-    const recipeLabel = new Text({
+    this.recipeLabel = new Text({
       text: "Traditional Recipe",
       style: new TextStyle({
         fontFamily: FONT.mono,
@@ -333,10 +381,10 @@ export class CookingScene {
         fill: COLORS.brown,
       }),
     });
-    recipeLabel.anchor.set(0, 0.5);
-    recipeLabel.position.set(-RECIPE_BTN.w / 2 + 70, 0);
+    this.recipeLabel.anchor.set(0, 0.5);
+    this.recipeLabel.position.set(-RECIPE_BTN.w / 2 + 70, 0);
 
-    this.recipeBtn.addChild(this.recipeBtnBg, icon, recipeLabel);
+    this.recipeBtn.addChild(this.recipeBtnBg, icon, this.recipeLabel);
     this.uiLayer.addChild(this.backBtn, this.titleText, this.recipeBtn);
   }
 
@@ -402,11 +450,12 @@ export class CookingScene {
     this.stoveSprite.visible = false;
     this.stoveLayer.addChild(this.stoveSprite);
 
-    // Soft glow when an ingredient is being dragged over the pan
+    // Soft glow when an ingredient is being dragged over the pan. The
+    // breathing pulse is driven via container alpha + scale in update().
     this.panGlow = new Graphics()
       .ellipse(0, 0, STOVE.w / 2 + 30, 130)
-      .fill({ color: COLORS.yellowBtn, alpha: 0.4 });
-    this.panGlow.filters = [new BlurFilter({ strength: 24 })];
+      .fill({ color: COLORS.yellowBtn, alpha: 0.6 });
+    this.panGlow.filters = [new BlurFilter({ strength: 32 })];
     this.panGlow.position.set(
       STOVE.x + STOVE.w / 2,
       STOVE.y + STOVE.h * 0.45
@@ -868,10 +917,31 @@ export class CookingScene {
     );
   }
 
-  onPointerMove({ x, y }) {
+  onPointerMove(state) {
+    const { x, y, source } = state;
     const p = this._toDesign(x, y);
 
     if (this.grabbed) {
+      // Hand-grab + brief hand loss. Same flicker concern as the other
+      // scenes — give a grace window before snap-back so MediaPipe's
+      // dropped frames don't kill the grab.
+      if (
+        this.grabbed.type === "ingredient" &&
+        this.grabbed.source === "hand" &&
+        source !== "hand"
+      ) {
+        const now = performance.now();
+        this._handGoneSince = this._handGoneSince ?? now;
+        if (now - this._handGoneSince > 600) {
+          this._snapGhostBack(this.grabbed.tile, this.grabbed.ghost);
+          this.grabbed = null;
+          this._handGoneSince = null;
+          this._panActive = false;
+          this.panGlow.visible = false;
+        }
+        return;
+      }
+      this._handGoneSince = null;
       if (p.x == null) return;
       if (this.grabbed.type === "ingredient") {
         this.grabbed.ghost.position.set(p.x, p.y);
@@ -880,6 +950,14 @@ export class CookingScene {
           this._panActive = over;
           this.panGlow.visible = over;
         }
+        // Hand auto-drops on pan entry; mouse keeps explicit release.
+        if (this.grabbed.source === "hand" && over) {
+          const { tile, ghost } = this.grabbed;
+          this.grabbed = null;
+          this._panActive = false;
+          this.panGlow.visible = false;
+          this._dropIntoPan(tile, ghost);
+        }
       } else if (this.grabbed.type === "slider") {
         const level = this._heatLevelFromX(p.x);
         cookingStore.setHeatLevel(level);
@@ -887,6 +965,10 @@ export class CookingScene {
       }
       return;
     }
+
+    this.buttons.pointerMove({ x: p.x, y: p.y, source });
+    this.tilePicker.pointerMove({ x: p.x, y: p.y, source });
+    this.heatPicker.pointerMove({ x: p.x, y: p.y, source });
 
     if (p.x == null) {
       this._setDoneHovered(false);
@@ -897,25 +979,20 @@ export class CookingScene {
     this._setRecipeHovered(this._inRecipeBtn(p.x, p.y));
   }
 
-  onPointerDown({ x, y }) {
+  onPointerDown(state) {
+    const { x, y, source, gestureType } = state;
     const p = this._toDesign(x, y);
     if (p.x == null) return;
 
-    if (this._inCircle(p.x, p.y, this.backBtn, 32)) {
-      this.onBack();
-      return;
-    }
-    if (this._inRecipeBtn(p.x, p.y)) {
-      this.onRecipe();
-      return;
-    }
-    if (this._inDoneBtn(p.x, p.y)) {
-      this.onDone();
-      return;
-    }
+    if (this.buttons.pointerDown({ x: p.x, y: p.y, source })) return;
 
-    // Heat slider — knob first, then anywhere on the track
-    if (this._inHeatKnob(p.x, p.y) || this._inHeatTrack(p.x, p.y)) {
+    // Heat slider intent: pinch (or mouse). Pinch is the precision
+    // gesture so it maps naturally to a continuous slider.
+    const sliderGesture = gestureType === "mouse" || gestureType === "pinch";
+    if (
+      sliderGesture &&
+      (this._inHeatKnob(p.x, p.y) || this._inHeatTrack(p.x, p.y))
+    ) {
       this.grabbed = { type: "slider" };
       const level = this._heatLevelFromX(p.x);
       cookingStore.setHeatLevel(level);
@@ -923,10 +1000,13 @@ export class CookingScene {
       return;
     }
 
-    // Ingredient tile (left panel)
+    // Mouse picks ingredients via click-and-drag. Hand picks via the
+    // 3s hover dwell on a tile (HandHoverPicker), so hand presses here
+    // don't initiate ingredient grabs.
+    if (source !== "mouse") return;
     const tile = this._tileAt(p.x, p.y);
     if (tile && tile.hasAsset && tile.sprite.texture) {
-      this._grabIngredient(tile, p.x, p.y);
+      this._grabIngredient(tile, p.x, p.y, "mouse");
     }
   }
 
@@ -968,7 +1048,11 @@ export class CookingScene {
   }
 
   getPointerDwell() {
-    return 0;
+    return Math.max(
+      this.buttons?.getDwellProgress() ?? 0,
+      this.tilePicker?.getDwellProgress() ?? 0,
+      this.heatPicker?.getDwellProgress() ?? 0
+    );
   }
   getState() {
     return {
@@ -976,11 +1060,19 @@ export class CookingScene {
       basketCount: cookingStore.getState().potOrder.length,
     };
   }
-  update() {}
+  update(now) {
+    if (this.panGlow.visible) {
+      const t = (now ?? performance.now()) / 1000;
+      const wave = (Math.sin(t * 4) + 1) / 2;
+      this.panGlow.alpha = 0.7 + wave * 0.3;
+      const s = 1.0 + 0.05 * wave;
+      this.panGlow.scale.set(s);
+    }
+  }
 
   // ---------- drag helpers ----------
 
-  _grabIngredient(tile, designX, designY) {
+  _grabIngredient(tile, designX, designY, source = "mouse") {
     const ghost = new Container();
     const tex = tile.sprite.texture;
     const sp = new Sprite(tex);
@@ -995,7 +1087,7 @@ export class CookingScene {
     ghost.scale.set(1.1);
     ghost.position.set(designX, designY);
     this.dragLayer.addChild(ghost);
-    this.grabbed = { type: "ingredient", tile, ghost };
+    this.grabbed = { type: "ingredient", tile, ghost, source };
   }
 
   _snapGhostBack(tile, ghost) {
@@ -1026,17 +1118,39 @@ export class CookingScene {
   _dropIntoPan(tile, ghost) {
     cookingStore.addToPot({ id: tile.id, name: tile.name });
 
-    // Drop a small persistent sprite scattered around the burner.
-    const angle = Math.random() * Math.PI * 2;
-    const r = Math.sqrt(Math.random()) * 90;
-    const offX = Math.cos(angle) * r;
-    const offY = Math.sin(angle) * r * 0.7;
+    // Phyllotaxis ("sunflower") placement: each new drop lands at a
+    // golden-angle step from the previous so items fan out evenly
+    // around the burner instead of stacking. A small random jitter
+    // keeps the look organic rather than computer-pattern.
+    const i = this.panItemsLayer.children.length;
+    const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5)); // ≈ 137.5°
+    const SPACING = 38; // tuned so the first ~12 items stay inside the pan
+    const radius = i === 0 ? 0 : Math.sqrt(i) * SPACING;
+    const angle = i * GOLDEN_ANGLE;
+    const jitterX = (Math.random() - 0.5) * 8;
+    const jitterY = (Math.random() - 0.5) * 6;
+    const offX = Math.cos(angle) * radius + jitterX;
+    // Vertical squash gives the burner a hint of perspective (the
+    // pan reads as an oval, not a flat disc).
+    const offY = Math.sin(angle) * radius * 0.7 + jitterY;
 
+    // Aspect-preserved sprite up to ~80px on its long edge — large
+    // enough to read clearly against the cookware art instead of
+    // disappearing as a tiny dot.
+    const MAX_EDGE = 80;
     const tex = tile.sprite.texture;
     const inPan = new Sprite(tex);
     inPan.anchor.set(0.5);
-    inPan.width = Math.min(48, tile.sprite.width * 0.55);
-    inPan.height = Math.min(48, tile.sprite.height * 0.55);
+    const tw = tex?.width || 1;
+    const th = tex?.height || 1;
+    const ratio = tw / th;
+    if (ratio >= 1) {
+      inPan.width = MAX_EDGE;
+      inPan.height = MAX_EDGE / ratio;
+    } else {
+      inPan.height = MAX_EDGE;
+      inPan.width = MAX_EDGE * ratio;
+    }
     inPan.position.set(offX, offY);
     inPan.alpha = 0;
     this.panItemsLayer.addChild(inPan);
@@ -1128,6 +1242,34 @@ export class CookingScene {
       x <= x1 + 10 &&
       Math.abs(y - HEAT_SLIDER.cy) <= HEAT_SLIDER.knobR + 4
     );
+  }
+
+  // Generous "near the slider" zone for the dwell picker — covers the
+  // flame icons above the track and a margin below, so users can
+  // hover the flame for a level without having to land on the thin
+  // track itself.
+  _inHeatRegion(x, y) {
+    const x0 = HEAT_SLIDER.cx - HEAT_SLIDER.trackW / 2;
+    const x1 = HEAT_SLIDER.cx + HEAT_SLIDER.trackW / 2;
+    return (
+      x >= x0 - 20 &&
+      x <= x1 + 20 &&
+      y >= HEAT_SLIDER.flameY - 30 &&
+      y <= HEAT_SLIDER.cy + HEAT_SLIDER.knobR + 12
+    );
+  }
+
+  // Single source of truth for "set heat to N + log it if it changed."
+  // Used by the dwell picker; pinch/mouse drag still go through the
+  // existing onPointerMove + onPointerUp flow.
+  _applyHeatLevel(level) {
+    cookingStore.setHeatLevel(level);
+    this._updateHeatSliderVisual();
+    const log = cookingStore.getState().recipeLog;
+    const lastHeat = [...log].reverse().find((e) => e.type === "heat");
+    if (!lastHeat || lastHeat.value !== level) {
+      cookingStore.logHeatChange(level);
+    }
   }
 
   _inCircle(x, y, container, radius) {

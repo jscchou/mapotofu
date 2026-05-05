@@ -9,6 +9,7 @@
 
 import { cookingStore } from "../cooking/cookingStore.js";
 import { galleryStore } from "../gallery/galleryStore.js";
+import { imageUrlToThumbnailDataUrl } from "../util/imageThumbnail.js";
 import dishPlaceholderUrl from "../assets/illustrations/MapoTofuillustration.png";
 
 const DESIGN_W = 1920;
@@ -94,11 +95,16 @@ export function mountAddToCollectionModal({ onClose, onAdded } = {}) {
   }
   let closed = false;
 
-  function submit() {
+  let submitting = false;
+  async function submit() {
+    if (submitting) return;
     if (!isValid()) {
       dishInput.focus();
       return;
     }
+    submitting = true;
+    addBtn.disabled = true;
+
     const state = cookingStore.getState();
     const dishName = dishInput.value.trim();
     const userName = userInput.value.trim();
@@ -116,6 +122,20 @@ export function mountAddToCollectionModal({ onClose, onAdded } = {}) {
 
     cookingStore.addSavedDish(dish);
 
+    // For persistence, downscale the (often multi-MB Gemini base64)
+    // image to a small JPEG thumbnail so localStorage doesn't choke
+    // on the second or third dish. The in-memory dish keeps the
+    // full-res URL for the current session.
+    let persistedImage = dish.imageUrl;
+    try {
+      persistedImage = await imageUrlToThumbnailDataUrl(dish.imageUrl);
+    } catch (e) {
+      console.warn(
+        "AddToCollectionModal: thumbnail generation failed, persisting original URL",
+        e
+      );
+    }
+
     // Mirror into the gallery store so the /gallery page picks it up
     // (it uses a different shape — translate the relevant fields).
     galleryStore.addEntry({
@@ -123,7 +143,7 @@ export function mountAddToCollectionModal({ onClose, onAdded } = {}) {
       title: dish.dishName,
       recipe: state.dishRecipe ?? "",
       note: dish.userName ? `by ${dish.userName}` : "",
-      dishImageUrl: dish.imageUrl,
+      dishImageUrl: persistedImage,
       ingredients: dish.ingredients.map((i) => i.name),
       timestamp: dish.createdAt,
     });

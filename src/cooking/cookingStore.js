@@ -26,6 +26,10 @@ function initialState() {
     // Persistent across runs (set by the "Add to Collection" modal,
     // preserved through reset() so a new cook session doesn't wipe them).
     savedDishes: [],
+    // Slide-in reference panel toggled from Scenes 3/4/5. Preserved
+    // through reset so the user's "I want to see the recipe" choice
+    // doesn't get clobbered on a new run.
+    traditionalRecipeOpen: false,
   };
 }
 
@@ -43,10 +47,14 @@ export const cookingStore = {
 
   reset() {
     // Keep savedDishes — those represent the user's collection, not the
-    // current cooking session.
+    // current cooking session. Also preserve the recipe-panel toggle so
+    // a "fresh run" doesn't yank reference content out from under the
+    // user mid-glance.
     const savedDishes = state.savedDishes ?? [];
+    const traditionalRecipeOpen = state.traditionalRecipeOpen ?? false;
     state = initialState();
     state.savedDishes = savedDishes;
+    state.traditionalRecipeOpen = traditionalRecipeOpen;
     notify();
   },
 
@@ -115,6 +123,26 @@ export const cookingStore = {
 
   addSavedDish(dish) {
     state.savedDishes.push(dish);
+    notify();
+  },
+
+  // Replace savedDishes wholesale (e.g. on /gallery boot, hydrating from
+  // the persistent galleryStore so the carousel has data without going
+  // through the cook flow).
+  setSavedDishes(dishes) {
+    state.savedDishes = Array.isArray(dishes) ? [...dishes] : [];
+    notify();
+  },
+
+  setTraditionalRecipeOpen(open) {
+    const next = !!open;
+    if (state.traditionalRecipeOpen === next) return;
+    state.traditionalRecipeOpen = next;
+    notify();
+  },
+
+  toggleTraditionalRecipe() {
+    state.traditionalRecipeOpen = !state.traditionalRecipeOpen;
     notify();
   },
 

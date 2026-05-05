@@ -630,3 +630,271 @@ body.gallery-page {
   background: #ffe633;
   transform: scale(1.03);
 }
+
+/* ============================================================
+   Cooking pot loader — shown on the plating page while the
+   Gemini API generates the dish image. Ported from a standalone
+   demo; all classes scoped under .cooking-loader and keyframes
+   renamed cl-* to prevent collisions.
+   ============================================================ */
+
+.cooking-loader-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 200;
+}
+
+.cooking-loader {
+  width: 240px;
+  height: 280px;
+  position: relative;
+  text-align: center;
+  font-family: "Intel One Mono", "JetBrains Mono", ui-monospace, monospace;
+  color: #980007;
+}
+
+.cooking-loader .pot-wrapper {
+  position: relative;
+  width: 190px;
+  height: 180px;
+  margin: 40px auto 0;
+  animation: cl-potMove 1.4s ease-in-out infinite;
+  transform-origin: center center;
+}
+
+.cooking-loader .pot {
+  width: 160px;
+  height: 160px;
+  background: radial-gradient(circle, #777 0%, #555 65%, #333 100%);
+  border: 4px solid #aaa;
+  border-radius: 50%;
+  position: relative;
+  z-index: 2;
+}
+
+.cooking-loader .handle {
+  width: 75px;
+  height: 22px;
+  background: #a76524;
+  border-radius: 8px;
+  position: absolute;
+  right: -2px;
+  top: 108px;
+  z-index: 1;
+}
+
+.cooking-loader .soup {
+  width: 105px;
+  height: 105px;
+  background: #ff7a1a;
+  border-radius: 50%;
+  position: absolute;
+  left: 27px;
+  top: 27px;
+  overflow: hidden;
+  opacity: 0.9;
+}
+
+.cooking-loader .bubble {
+  width: 12px;
+  height: 12px;
+  background: #ffd36a;
+  border-radius: 50%;
+  position: absolute;
+  bottom: 18px;
+  animation: cl-bubbleUp 1.4s infinite ease-in;
+}
+
+.cooking-loader .b1 { left: 20px; animation-delay: 0s; }
+.cooking-loader .b2 { left: 45px; animation-delay: 0.3s; }
+.cooking-loader .b3 { left: 68px; animation-delay: 0.6s; }
+.cooking-loader .b4 { left: 35px; animation-delay: 0.9s; }
+
+.cooking-loader .steam {
+  width: 10px;
+  height: 38px;
+  border-radius: 50%;
+  background: rgba(255, 160, 80, 0.35);
+  position: absolute;
+  top: 5px;
+  animation: cl-steamRise 1.8s infinite ease-in-out;
+}
+
+.cooking-loader .steam-1 { left: 82px; animation-delay: 0s; }
+.cooking-loader .steam-2 { left: 108px; animation-delay: 0.4s; }
+.cooking-loader .steam-3 { left: 134px; animation-delay: 0.8s; }
+
+.cooking-loader .fire {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  margin-top: 8px;
+}
+
+.cooking-loader .fire span {
+  width: 18px;
+  height: 28px;
+  background: #ff5722;
+  border-radius: 50% 50% 50% 50%;
+  transform-origin: bottom center;
+  animation: cl-flame 0.7s infinite alternate ease-in-out;
+}
+
+.cooking-loader .fire span:nth-child(2) {
+  animation-delay: 0.2s;
+  background: #ff8a00;
+}
+
+.cooking-loader .fire span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+.cooking-loader .cooking-loader-text {
+  margin-top: 18px;
+  font-family: "Intel One Mono", "JetBrains Mono", ui-monospace, monospace;
+  font-weight: 600;
+  font-size: 22px;
+  color: #980007;
+}
+
+@keyframes cl-bubbleUp {
+  0% {
+    transform: translateY(20px) scale(0.6);
+    opacity: 0;
+  }
+  30% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(-55px) scale(1.2);
+    opacity: 0;
+  }
+}
+
+@keyframes cl-flame {
+  from {
+    transform: scaleY(0.75);
+    opacity: 0.8;
+  }
+  to {
+    transform: scaleY(1.25);
+    opacity: 1;
+  }
+}
+
+@keyframes cl-potMove {
+  0%, 100% {
+    transform: rotate(-1deg) scale(1);
+  }
+  50% {
+    transform: rotate(1deg) scale(1.02);
+  }
+}
+
+@keyframes cl-steamRise {
+  0% {
+    transform: translateY(20px) scale(0.8);
+    opacity: 0;
+  }
+  50% {
+    opacity: 0.6;
+  }
+  100% {
+    transform: translateY(-25px) scale(1.2);
+    opacity: 0;
+  }
+}
+
+/* ============================================================
+   Traditional Recipe slide-in panel — shared across Scenes 3/4/5.
+   Non-interactive (pointer-events off) so the scene below stays
+   usable while the panel is up. Toggled from `cookingStore`.
+   ============================================================ */
+
+.trp-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none; /* clicks pass through to the scene */
+  z-index: 150;          /* above scene content, below modals */
+}
+
+.trp-stage {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform-origin: top right;
+  /* `transform: translateY(-50%) scale(s)` applied in JS so the
+     panel scales with the 1920×1080 design canvas. */
+}
+
+.trp-panel {
+  width: 480px;
+  height: 920px;
+  background: rgba(255, 244, 183, 0.8);
+  border: 2px solid #f2e178;
+  border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+  backdrop-filter: blur(40px);
+  -webkit-backdrop-filter: blur(40px);
+  transition: transform 250ms cubic-bezier(0.2, 0.7, 0.2, 1);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 56px 20px 32px;
+  font-family: "Intel One Mono", "JetBrains Mono", ui-monospace, monospace;
+  box-sizing: border-box;
+}
+
+.trp-illustration {
+  width: 200px;
+  height: auto;
+  display: block;
+  margin: 0 0 12px;
+}
+
+.trp-title {
+  margin: 0 0 24px;
+  font: 500 22px/1.2 "Intel One Mono", ui-monospace, monospace;
+  color: #8a5c31;
+  letter-spacing: -0.02em;
+  text-align: center;
+}
+
+.trp-card {
+  width: 440px;
+  flex: 1;
+  background: #fffdf2;
+  border-radius: 12px;
+  padding: 12px 0;
+  overflow: hidden;
+}
+
+.trp-ingredients {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.trp-ingredients li {
+  position: relative;
+  padding: 13px 16px;
+  font: 500 20px/1 "Intel One Mono", ui-monospace, monospace;
+  color: #8a5c31;
+  letter-spacing: -0.02em;
+  text-align: center;
+}
+
+.trp-ingredients li:not(:first-child)::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 280px;
+  height: 1px;
+  background: #ffd2a8;
+}

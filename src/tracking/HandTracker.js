@@ -15,6 +15,12 @@ export class HandTracker {
     this.landmarker = null;
     this.running = false;
     this.hadHandLastFrame = false;
+
+    // Sticky-hand tracking: when the user has both hands in frame we
+    // want to keep following the same one each frame instead of letting
+    // MediaPipe swap. We remember the index-tip position of the chosen
+    // hand and pick the closest match next frame.
+    this._lastTip = null;
   }
 
   async init() {
@@ -25,7 +31,9 @@ export class HandTracker {
         delegate: "GPU",
       },
       runningMode: "VIDEO",
-      numHands: 1,
+      // Detect up to two hands so we can choose between them deliberately;
+      // the consumer-facing API still emits a single sticky hand.
+      numHands: 2,
       minHandDetectionConfidence: 0.5,
       minHandPresenceConfidence: 0.5,
       minTrackingConfidence: 0.5,
@@ -91,24 +99,67 @@ export class HandTracker {
   _detect(now) {
     // MediaPipe wants a monotonic millisecond timestamp.
     const result = this.landmarker.detectForVideo(this.video, now);
-    const hasHand = result.landmarks && result.landmarks.length > 0;
+    const hands = result.landmarks ?? [];
+    const hasHand = hands.length > 0;
 
     if (hasHand) {
-      const confidence =
-        result.handednesses?.[0]?.[0]?.score ?? 0;
+      const idx = this._chooseHandIndex(hands, result.handednesses ?? []);
+      const lms = hands[idx];
+      const tip = lms[8];
+      this._lastTip = { x: tip.x, y: tip.y };
+
+      const confidence = result.handednesses?.[idx]?.[0]?.score ?? 0;
       const handedness =
-        result.handednesses?.[0]?.[0]?.categoryName ?? "Unknown";
+        result.handednesses?.[idx]?.[0]?.categoryName ?? "Unknown";
       this.onHandDetected({
-        landmarks: result.landmarks[0],
-        worldLandmarks: result.worldLandmarks?.[0] ?? null,
+        landmarks: lms,
+        worldLandmarks: result.worldLandmarks?.[idx] ?? null,
         handedness,
         confidence,
         timestamp: now / 1000,
       });
       this.hadHandLastFrame = true;
     } else if (this.hadHandLastFrame) {
+      // Lost the tracked hand — drop the proximity anchor so the next
+      // detection picks deliberately by confidence rather than chasing
+      // a stale position.
+      this._lastTip = null;
       this.onHandLost();
       this.hadHandLastFrame = false;
     }
+  }
+
+  // Pick the same hand we were tracking last frame: closest index-tip
+  // wins. With no prior anchor (first detection / after a loss), pick
+  // the highest-confidence hand.
+  _chooseHandIndex(hands, handednesses) {
+    if (hands.length === 1) return 0;
+
+    if (this._lastTip) {
+      let bestIdx = 0;
+      let bestDist = Infinity;
+      for (let i = 0; i < hands.length; i++) {
+        const tip = hands[i][8];
+        const dx = tip.x - this._lastTip.x;
+        const dy = tip.y - this._lastTip.y;
+        const d = dx * dx + dy * dy; // sqrt unnecessary for argmin
+        if (d < bestDist) {
+          bestDist = d;
+          bestIdx = i;
+        }
+      }
+      return bestIdx;
+    }
+
+    let bestIdx = 0;
+    let bestConf = -1;
+    for (let i = 0; i < hands.length; i++) {
+      const c = handednesses[i]?.[0]?.score ?? 0;
+      if (c > bestConf) {
+        bestConf = c;
+        bestIdx = i;
+      }
+    }
+    return bestIdx;
   }
 }

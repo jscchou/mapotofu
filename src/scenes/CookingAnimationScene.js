@@ -10,6 +10,8 @@ import staticDishUrl from "../assets/illustrations/MapoTofuillustration.png";
 import { cookingStore } from "../cooking/cookingStore.js";
 import { generateDishImage } from "../cooking/imageApi.js";
 import { ingredients as INGREDIENT_DATA } from "../data/ingredients.js";
+import { mountCookingLoader } from "../ui/CookingLoader.js";
+import { HandButtonDwell } from "../input/HandButtonDwell.js";
 
 // Build the request body for /api/generate-dish from the shared store.
 // Walks the pot in drag-order, splits items into the four buckets the
@@ -56,9 +58,6 @@ const COLORS = {
   ink: 0x2a2a2a,
   muted: 0x6f6a62,
   titleRed: 0x980007,
-  potFill: 0xfdf6e6,
-  outline: 0x333333,
-  steam: 0xf2efe9,
   yellow: 0xffdb00,
   errorRed: 0xb83c36,
 };
@@ -84,13 +83,22 @@ export class CookingAnimationScene {
     this._scale = 1;
     this._abort = null;
     this._stage = "idle"; // 'loading' | 'reveal' | 'done' | 'error'
-    this._steamPhase = 0;
+    this._loader = null; // DOM loader handle while in 'loading'
 
-    this._buildPotWireframe();
-    this._buildLoadingLabel();
-    this._buildSteam();
     this._buildErrorUI();
     this._buildDishHolder();
+
+    // Retry button only fires while in error state — gated via setEnabled.
+    this.buttons = new HandButtonDwell();
+    this.buttons.register(
+      "retry",
+      (x, y) => this._inRetry(x, y),
+      () => {
+        this._reset();
+        this._startGeneration();
+      }
+    );
+    this.buttons.setEnabled("retry", false);
   }
 
   // ---------- lifecycle ----------
@@ -117,79 +125,31 @@ export class CookingAnimationScene {
       window.removeEventListener("keydown", this._keyHandler);
       this._keyHandler = null;
     }
+    this._unmountLoader();
   }
 
   _reset() {
     this._stage = "loading";
-    this.loadingLabel.text = "plating…";
-    this.loadingLabel.visible = true;
     this.errorBox.visible = false;
     this.dishHolder.visible = false;
     this.dishSprite.alpha = 0;
     this.dishSprite.scale.set(0.5);
-    this.potBody.alpha = 1;
-    this.potLabel.alpha = 1;
-    this.steamLayer.alpha = 1;
-    this.steamLayer.visible = true;
+    this.buttons?.setEnabled("retry", false);
+    this._mountLoader();
+  }
+
+  _mountLoader() {
+    if (this._loader) return;
+    this._loader = mountCookingLoader();
+  }
+
+  _unmountLoader() {
+    if (!this._loader) return;
+    this._loader.unmount();
+    this._loader = null;
   }
 
   // ---------- build ----------
-
-  _buildPotWireframe() {
-    this.pot = new Container();
-    this.pot.position.set(CANVAS.w / 2, CANVAS.h / 2 + 40);
-    this.potBody = new Graphics()
-      .roundRect(-180, -120, 360, 240, 28)
-      .fill(COLORS.potFill)
-      .stroke({ color: COLORS.outline, width: 5 });
-    this.potLabel = new Text({
-      text: "POT",
-      style: new TextStyle({
-        fontFamily: FONT.mono,
-        fontSize: 16,
-        fontWeight: "600",
-        fill: COLORS.muted,
-        letterSpacing: 4,
-      }),
-    });
-    this.potLabel.anchor.set(0.5, 0.5);
-    this.potLabel.position.set(0, 80);
-    this.pot.addChild(this.potBody, this.potLabel);
-    this.bgLayer.addChild(this.pot);
-  }
-
-  _buildSteam() {
-    // 3 small puffs above the pot, animated sinusoidally.
-    this.steamLayer = new Container();
-    this.steamLayer.position.set(CANVAS.w / 2, CANVAS.h / 2 + 40 - 140);
-
-    this.steamPuffs = [];
-    for (let i = 0; i < 3; i++) {
-      const g = new Graphics()
-        .ellipse(0, 0, 26, 18)
-        .fill({ color: COLORS.steam, alpha: 0.85 })
-        .stroke({ color: COLORS.outline, width: 2 });
-      g.position.set((i - 1) * 50, 0);
-      this.steamLayer.addChild(g);
-      this.steamPuffs.push({ g, basePhase: i * 0.7 });
-    }
-    this.bgLayer.addChild(this.steamLayer);
-  }
-
-  _buildLoadingLabel() {
-    this.loadingLabel = new Text({
-      text: "Cooking…",
-      style: new TextStyle({
-        fontFamily: FONT.mono,
-        fontSize: 28,
-        fontWeight: "500",
-        fill: COLORS.titleRed,
-      }),
-    });
-    this.loadingLabel.anchor.set(0.5, 0);
-    this.loadingLabel.position.set(CANVAS.w / 2, CANVAS.h / 2 - 220);
-    this.uiLayer.addChild(this.loadingLabel);
-  }
 
   _buildErrorUI() {
     this.errorBox = new Container();
@@ -294,15 +254,15 @@ export class CookingAnimationScene {
 
   _showError(msg) {
     this._stage = "error";
-    this.loadingLabel.visible = false;
-    this.steamLayer.visible = false;
+    this._unmountLoader();
     this.errorText.text = msg;
     this.errorBox.visible = true;
+    this.buttons?.setEnabled("retry", true);
   }
 
   _beginReveal(tex) {
     this._stage = "reveal";
-    this.loadingLabel.visible = false;
+    this._unmountLoader();
 
     // Size the dish sprite to ~520px wide, preserving aspect
     const tw = tex.width || 1;
@@ -320,11 +280,6 @@ export class CookingAnimationScene {
     const step = () => {
       const t = Math.min(1, (performance.now() - start) / dur);
       const e = easeInOutCubic(t);
-
-      // Steam clears + pot fades out
-      this.steamLayer.alpha = 1 - e;
-      this.potBody.alpha = 1 - e * 0.95;
-      this.potLabel.alpha = 1 - e;
 
       // Dish reveals from the center
       this.dishSprite.alpha = e;
@@ -355,21 +310,23 @@ export class CookingAnimationScene {
     );
   }
 
-  onPointerMove() {}
+  onPointerMove(state) {
+    const { x, y, source } = state;
+    const p = this._toDesign(x, y);
+    this.buttons?.pointerMove({ x: p.x, y: p.y, source });
+  }
 
-  onPointerDown({ x, y }) {
+  onPointerDown(state) {
+    const { x, y, source } = state;
     const p = this._toDesign(x, y);
     if (p.x == null) return;
-    if (this._stage === "error" && this._inRetry(p.x, p.y)) {
-      this._reset();
-      this._startGeneration();
-    }
+    this.buttons?.pointerDown({ x: p.x, y: p.y, source });
   }
 
   onPointerUp() {}
 
   getPointerDwell() {
-    return 0;
+    return this.buttons?.getDwellProgress() ?? 0;
   }
 
   getState() {
@@ -377,17 +334,8 @@ export class CookingAnimationScene {
   }
 
   update() {
-    if (this._stage !== "loading") return;
-    // Animate steam puffs
-    this._steamPhase += 0.04;
-    for (const puff of this.steamPuffs) {
-      const dy = Math.sin(this._steamPhase + puff.basePhase) * 6;
-      puff.g.position.y = dy - 4;
-      puff.g.alpha = 0.55 + 0.35 * Math.sin(this._steamPhase + puff.basePhase);
-    }
-    // Pulse loading dots
-    const dots = ".".repeat(1 + Math.floor((this._steamPhase * 2) % 3));
-    this.loadingLabel.text = `plating${dots}`;
+    // Loader visuals + text cycling are handled by the DOM CookingLoader;
+    // nothing to drive from the scene's per-frame ticker.
   }
 
   // ---------- helpers ----------

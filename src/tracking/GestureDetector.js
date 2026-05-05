@@ -2,9 +2,11 @@
 //   - Pinch: thumb-tip (4) to index-tip (8) distance, normalized by hand size
 //     (wrist 0 to middle-MCP 9). Hysteresis: enter < enterThreshold,
 //     exit > exitThreshold.
+//   - Fist: all four non-thumb fingers curled. Used for the "grab" gesture
+//     when dragging ingredients/cookware.
 //   - Three-finger pose: index + middle + ring extended, pinky curled.
 //
-// Accuracy tweaks applied to both:
+// Accuracy tweaks applied to all:
 //   - EMA-smoothed pinch ratio (kills single-frame spikes).
 //   - Dwell: N consecutive frames of the target state before flipping.
 //   - Confidence gate: ignore frames where MediaPipe score < minConfidence.
@@ -17,7 +19,9 @@ export class GestureDetector {
     minConfidence = 0.6,
     pinchDwellFrames = 3,
     threeFingerDwellFrames = 8,
+    fistDwellFrames = 4,
     fingerExtendedCos = 0.6,
+    fingerCurledCos = 0.2,
     onPinchStart,
     onPinchMove,
     onPinchEnd,
@@ -30,7 +34,9 @@ export class GestureDetector {
     this.minConfidence = minConfidence;
     this.pinchDwellFrames = pinchDwellFrames;
     this.threeFingerDwellFrames = threeFingerDwellFrames;
+    this.fistDwellFrames = fistDwellFrames;
     this.fingerExtendedCos = fingerExtendedCos;
+    this.fingerCurledCos = fingerCurledCos;
 
     this.onPinchStart = onPinchStart ?? (() => {});
     this.onPinchMove = onPinchMove ?? (() => {});
@@ -48,6 +54,10 @@ export class GestureDetector {
     this.lastThreePose = false;
     this.threeEnterCount = 0;
     this.threeExitCount = 0;
+
+    this.fist = false;
+    this.fistEnterCount = 0;
+    this.fistExitCount = 0;
   }
 
   // landmarks: 21 MediaPipe hand landmarks (normalized 0..1)
@@ -59,6 +69,7 @@ export class GestureDetector {
 
     this._updatePinch(landmarks, position);
     this._updateThreeFinger(landmarks, position);
+    this._updateFist(landmarks);
   }
 
   cancel() {
@@ -74,6 +85,9 @@ export class GestureDetector {
     this.pinchExitCount = 0;
     this.threeEnterCount = 0;
     this.threeExitCount = 0;
+    this.fist = false;
+    this.fistEnterCount = 0;
+    this.fistExitCount = 0;
     this.smoothedRatio = null;
     this.rawRatio = null;
     this.lastThreePose = false;
@@ -84,6 +98,9 @@ export class GestureDetector {
   }
   isThreeFinger() {
     return this.threeFinger;
+  }
+  isFist() {
+    return this.fist;
   }
   getRatio() {
     return this.smoothedRatio;
@@ -198,5 +215,41 @@ export class GestureDetector {
     const pinkyExt = this._isExtended(lms, 17, 18, 20);
     // Strictly: index + middle + ring up, pinky down. Thumb unconstrained.
     return indexExt && middleExt && ringExt && !pinkyExt;
+  }
+
+  // ---------- fist (closed hand for "grab") ----------
+
+  _updateFist(landmarks) {
+    const isFist = this._isFistPose(landmarks);
+
+    if (!this.fist) {
+      if (isFist) this.fistEnterCount++;
+      else this.fistEnterCount = 0;
+      if (this.fistEnterCount >= this.fistDwellFrames) {
+        this.fist = true;
+        this.fistEnterCount = 0;
+        this.fistExitCount = 0;
+      }
+    } else {
+      if (!isFist) this.fistExitCount++;
+      else this.fistExitCount = 0;
+      if (this.fistExitCount >= this.fistDwellFrames) {
+        this.fist = false;
+        this.fistEnterCount = 0;
+        this.fistExitCount = 0;
+      }
+    }
+  }
+
+  // All four non-thumb fingers curled. We use a slightly higher cos
+  // threshold (more strictly curled) than the inverse of fingerExtendedCos
+  // to avoid bouncing between "extended" and "fist" when fingers are
+  // partially relaxed.
+  _isFistPose(lms) {
+    const indexCurled = this._fingerCos(lms, 5, 6, 8) < this.fingerCurledCos;
+    const middleCurled = this._fingerCos(lms, 9, 10, 12) < this.fingerCurledCos;
+    const ringCurled = this._fingerCos(lms, 13, 14, 16) < this.fingerCurledCos;
+    const pinkyCurled = this._fingerCos(lms, 17, 18, 20) < this.fingerCurledCos;
+    return indexCurled && middleCurled && ringCurled && pinkyCurled;
   }
 }

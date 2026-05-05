@@ -9,6 +9,8 @@ import {
 } from "pixi.js";
 import basketUrl from "../assets/FoodPrepBasket.png";
 import { ingredients as INGREDIENT_DATA } from "../data/ingredients.js";
+import { HandButtonDwell } from "../input/HandButtonDwell.js";
+import { HandHoverPicker } from "../input/HandHoverPicker.js";
 
 // ---------- Design canvas ----------
 // Everything is laid out in 1920x1080 design coords. The root Container is
@@ -88,8 +90,15 @@ const BASKET = {
   radius: 344, // matches the full 688px diameter for drop hit-testing
 };
 
-// Mini-tile inside the basket when an ingredient is dropped.
-const BASKET_ITEM = { size: 60 };
+// Mini-tile inside the basket when an ingredient is dropped. Bumped from
+// 60 → 80 so dropped items read at a similar weight to the basket art
+// and don't feel "tiny" against the 688px basket bounding box.
+const BASKET_ITEM = { size: 80 };
+
+// Items pile inside the visible woven interior of the basket art, not
+// the full hit-test radius. The PNG's interior is ~50% of its bounding
+// box, so cluster tightly and bias toward the center.
+const BASKET_PILE_RADIUS = 155;
 
 // ---------- Helpers ----------
 
@@ -162,11 +171,50 @@ export class IngredientScene {
     this._buildContinue();
 
     this._updateContinueState();
+
+    // Hand-hover-to-press for every clickable button. Mouse users still
+    // get instant clicks via pointerDown.
+    this.buttons = new HandButtonDwell();
+    this.buttons.register(
+      "back",
+      (x, y) => this._inCircle(x, y, this.backBtn, 32),
+      () => this.onBack()
+    );
+    this.buttons.register(
+      "recipe",
+      (x, y) => this._inRecipeBtn(x, y),
+      () => this.onRecipe()
+    );
+    this.buttons.register(
+      "continue",
+      (x, y) => this._inContinueBtn(x, y),
+      () => {
+        if (this._isValid()) this.onContinue();
+      }
+    );
+
+    // Hover-to-pick: 3s of hover over a tile starts the grab — no fist
+    // gesture required. Auto-drop happens in onPointerMove the moment
+    // the ghost cursor enters the basket.
+    this.tilePicker = new HandHoverPicker({
+      getHoveredTarget: (x, y) => {
+        const tile = this._tileAt(x, y);
+        return tile && tile.hasAsset ? tile : null;
+      },
+      onPick: (tile, x, y) => this._grab(tile, x, y, "hand"),
+    });
   }
 
   // ---------- Lifecycle ----------
   onEnter() {}
   onExit() {}
+
+  // External hook so main.js can flip the recipe button label when
+  // the shared traditionalRecipeOpen state changes.
+  setRecipeOpen(open) {
+    if (!this.recipeText) return;
+    this.recipeText.text = open ? "Hide Recipe" : "Traditional Recipe";
+  }
 
   // ---------- Build: panels ----------
 
@@ -244,6 +292,26 @@ export class IngredientScene {
     rightHeader.position.set(40, 28);
     this.rightPanel.addChild(rightHeader);
 
+    // Sub-caption matching the "Tofu (Choose 1)" / "Oil (Choose 1)"
+    // pattern on the left panel — tells the player the right panel
+    // accepts any number of picks.
+    const ingredientsCaption = new Text({
+      text: "(Choose as many kinds as you like)",
+      style: new TextStyle({
+        fontFamily: FONT.mono,
+        fontSize: 18,
+        fontWeight: "400",
+        fill: COLORS.titleRed,
+        lineHeight: 26,
+        letterSpacing: -0.04 * 18,
+      }),
+    });
+    ingredientsCaption.anchor.set(0, 0.5);
+    // Place it baseline-aligned with the "Ingredients" header — same
+    // y-center as the header text, just to the right of it.
+    ingredientsCaption.position.set(40 + rightHeader.width + 12, 28 + 33 / 2);
+    this.rightPanel.addChild(ingredientsCaption);
+
     this.panelsLayer.addChild(this.rightPanel);
   }
 
@@ -255,10 +323,12 @@ export class IngredientScene {
     this.basketContainer.position.set(BASKET.cx, BASKET.cy);
 
     // Soft glow (hidden until drag-over)
+    // Base alpha is high enough that the glow reads at a glance; the
+    // breathing pulse is driven via container alpha + scale in update().
     this.basketGlow = new Graphics()
       .circle(0, 0, BASKET.radius + 30)
-      .fill({ color: COLORS.basketGlow, alpha: 0.28 });
-    this.basketGlow.filters = [new BlurFilter({ strength: 24 })];
+      .fill({ color: COLORS.basketGlow, alpha: 0.55 });
+    this.basketGlow.filters = [new BlurFilter({ strength: 28 })];
     this.basketGlow.visible = false;
 
     this.basketSprite = new Sprite();
@@ -678,10 +748,28 @@ export class IngredientScene {
 
   // ---------- Pointer API ----------
 
-  onPointerMove({ x, y }) {
+  onPointerMove(state) {
+    const { x, y, source } = state;
     const p = this._toDesign(x, y);
 
     if (this.grabbed) {
+      // Hand-grabbed and the hand briefly disappeared. MediaPipe drops
+      // hands on noisy frames; without a grace window we'd snap back
+      // after one missed frame. Freeze ghost during the grace; only
+      // snap back if the hand stays gone.
+      if (this.grabbed.source === "hand" && source !== "hand") {
+        const now = performance.now();
+        this._handGoneSince = this._handGoneSince ?? now;
+        if (now - this._handGoneSince > 600) {
+          this._snapGhostBack(this.grabbed.tile, this.grabbed.ghost);
+          this.grabbed = null;
+          this._handGoneSince = null;
+          this._basketActive = false;
+          this.basketGlow.visible = false;
+        }
+        return;
+      }
+      this._handGoneSince = null;
       if (p.x == null) return;
       this.grabbed.ghost.position.set(p.x, p.y);
       const over = this._overBasket(p.x, p.y);
@@ -689,8 +777,22 @@ export class IngredientScene {
         this._basketActive = over;
         this.basketGlow.visible = over;
       }
+      // Hand-grab auto-drops the moment the ghost reaches the basket.
+      // Mouse keeps the explicit click-and-release semantic — there the
+      // user actively releases by letting go of the button.
+      if (this.grabbed.source === "hand" && over) {
+        const { tile, ghost } = this.grabbed;
+        this.grabbed = null;
+        this._basketActive = false;
+        this.basketGlow.visible = false;
+        this._addToBasket(tile, ghost);
+      }
       return;
     }
+
+    // Drive hand-hover dwell for every registered button + tile.
+    this.buttons.pointerMove({ x: p.x, y: p.y, source });
+    this.tilePicker.pointerMove({ x: p.x, y: p.y, source });
 
     if (p.x == null) {
       this._setBackHovered(false);
@@ -704,26 +806,21 @@ export class IngredientScene {
     this._setContinueHovered(this._inContinueBtn(p.x, p.y));
   }
 
-  onPointerDown({ x, y }) {
+  onPointerDown(state) {
+    const { x, y, source } = state;
     const p = this._toDesign(x, y);
     if (p.x == null) return;
 
-    if (this._inCircle(p.x, p.y, this.backBtn, 32)) {
-      this.onBack();
-      return;
-    }
-    if (this._inRecipeBtn(p.x, p.y)) {
-      this.onRecipe();
-      return;
-    }
-    if (this._inContinueBtn(p.x, p.y) && this._isValid()) {
-      this.onContinue();
-      return;
-    }
+    // Mouse buttons fire on click; hand buttons use dwell.
+    if (this.buttons.pointerDown({ x: p.x, y: p.y, source })) return;
+
+    // Mouse picks via click-and-drag. Hand picks via hover dwell
+    // (HandHoverPicker), so we ignore hand presses here entirely.
+    if (source !== "mouse") return;
 
     const tile = this._tileAt(p.x, p.y);
     if (!tile || !tile.hasAsset) return;
-    this._grab(tile, p.x, p.y);
+    this._grab(tile, p.x, p.y, "mouse");
   }
 
   onPointerUp({ x, y, cancelled }) {
@@ -741,8 +838,25 @@ export class IngredientScene {
     this._addToBasket(tile, ghost);
   }
 
+  update(now) {
+    // Soft breathing on the basket "shine" while a ghost is hovering
+    // over the basket — alpha and scale together make it feel inviting
+    // rather than a static halo. Driven off performance.now so it stays
+    // smooth even if frames stutter.
+    if (this.basketGlow.visible) {
+      const t = (now ?? performance.now()) / 1000;
+      const wave = (Math.sin(t * 4) + 1) / 2; // 0..1, ~0.6 Hz
+      this.basketGlow.alpha = 0.7 + wave * 0.3;
+      const s = 1.0 + 0.05 * wave;
+      this.basketGlow.scale.set(s);
+    }
+  }
+
   getPointerDwell() {
-    return 0;
+    return Math.max(
+      this.buttons?.getDwellProgress() ?? 0,
+      this.tilePicker?.getDwellProgress() ?? 0
+    );
   }
 
   getState() {
@@ -769,7 +883,7 @@ export class IngredientScene {
 
   // ---------- Drag / drop internals ----------
 
-  _grab(tile, designX, designY) {
+  _grab(tile, designX, designY, source = "mouse") {
     const ghost = new Container();
     ghost.label = `Ghost:${tile.id}`;
 
@@ -790,7 +904,7 @@ export class IngredientScene {
     ghost.position.set(designX, designY);
     this.dragLayer.addChild(ghost);
 
-    this.grabbed = { tile, ghost };
+    this.grabbed = { tile, ghost, source };
   }
 
   _snapGhostBack(tile, ghost) {
@@ -820,12 +934,11 @@ export class IngredientScene {
       }
     }
 
-    // Pick a scattered spot inside the basket interior (relative to center).
-    // Inner scatter radius is roughly half the basket diameter minus a margin
-    // so mini-tiles don't poke out through the woven rim.
-    const scatterMax = BASKET.radius - BASKET_ITEM.size / 2 - 14;
+    // Pile spot inside the basket interior. We use linear-r (not
+    // sqrt-of-uniform) so density biases toward the middle and items
+    // don't get pushed onto the woven rim where they read as small.
     const angle = Math.random() * Math.PI * 2;
-    const r = Math.sqrt(Math.random()) * scatterMax;
+    const r = Math.random() * BASKET_PILE_RADIUS;
     const offX = Math.cos(angle) * r;
     const offY = Math.sin(angle) * r;
     const target = {

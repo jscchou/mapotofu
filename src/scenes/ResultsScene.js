@@ -8,6 +8,7 @@ import {
 } from "pixi.js";
 import dishPlaceholderUrl from "../assets/illustrations/MapoTofuillustration.png";
 import { cookingStore } from "../cooking/cookingStore.js";
+import { HandButtonDwell } from "../input/HandButtonDwell.js";
 
 // Results scene — shown after the cooking animation finishes.
 // Displays the user's "finished" dish + the chronological list of
@@ -121,6 +122,24 @@ export class ResultsScene {
     this._buildLeftCard();
     this._buildRightCard();
     this._buildAddToCollection();
+
+    // Hand-hover-to-press for every button. Mouse still gets instant clicks.
+    this.buttons = new HandButtonDwell();
+    this.buttons.register(
+      "back",
+      (x, y) => this._inCircle(x, y, this.backBtn, 32),
+      () => this.onBack()
+    );
+    this.buttons.register(
+      "collection",
+      (x, y) => this._inCollectionBtn(x, y),
+      () => this.onOpenCollection()
+    );
+    this.buttons.register(
+      "add",
+      (x, y) => this._inAddBtn(x, y),
+      () => this.onAddToCollection()
+    );
   }
 
   // ---------- lifecycle ----------
@@ -448,8 +467,12 @@ export class ResultsScene {
     this._updateTranscriptionTransform();
   }
 
-  onPointerMove({ x, y }) {
+  onPointerMove(state) {
+    const { x, y, source } = state;
     const p = this._toDesign(x, y);
+
+    this.buttons?.pointerMove({ x: p.x, y: p.y, source });
+
     if (p.x == null) {
       this._setAddHovered(false);
       this._setCollectionHovered(false);
@@ -459,28 +482,17 @@ export class ResultsScene {
     this._setCollectionHovered(this._inCollectionBtn(p.x, p.y));
   }
 
-  onPointerDown({ x, y }) {
+  onPointerDown(state) {
+    const { x, y, source } = state;
     const p = this._toDesign(x, y);
     if (p.x == null) return;
-
-    if (this._inCircle(p.x, p.y, this.backBtn, 32)) {
-      this.onBack();
-      return;
-    }
-    if (this._inCollectionBtn(p.x, p.y)) {
-      this.onOpenCollection();
-      return;
-    }
-    if (this._inAddBtn(p.x, p.y)) {
-      this.onAddToCollection();
-      return;
-    }
+    this.buttons?.pointerDown({ x: p.x, y: p.y, source });
   }
 
   onPointerUp() {}
   update() {}
   getPointerDwell() {
-    return 0;
+    return this.buttons?.getDwellProgress() ?? 0;
   }
   getState() {
     return { grabbedId: null, basketCount: 0 };

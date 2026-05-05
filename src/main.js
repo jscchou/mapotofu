@@ -5,13 +5,17 @@ import { CookwareScene } from "./scenes/CookwareScene.js";
 import { CookingScene } from "./scenes/CookingScene.js";
 import { CookingAnimationScene } from "./scenes/CookingAnimationScene.js";
 import { ResultsScene } from "./scenes/ResultsScene.js";
+import { CollectionScene } from "./scenes/CollectionScene.js";
 import { HandTracker } from "./tracking/HandTracker.js";
 import { OneEuroFilter } from "./tracking/OneEuroFilter.js";
 import { GestureDetector } from "./tracking/GestureDetector.js";
 import { PointerManager } from "./input/PointerManager.js";
 import { DebugOverlay } from "./ui/DebugOverlay.js";
 import { mountAddToCollectionModal } from "./ui/AddToCollectionModal.js";
+import { mountTraditionalRecipePanel } from "./ui/TraditionalRecipePanel.js";
 import { cookingStore } from "./cooking/cookingStore.js";
+import { hydrateSavedDishesFromGallery } from "./gallery/hydrate.js";
+import { galleryStore } from "./gallery/galleryStore.js";
 import { ingredients as INGREDIENT_DATA } from "./data/ingredients.js";
 
 const POINTER_COLOR = 0xd96a3a;
@@ -179,6 +183,15 @@ async function bootMainApp() {
   // Hidden by default; press 'D' to toggle.
   const debug = new DebugOverlay({ startVisible: false });
 
+  // Bring previously-saved dishes back into memory so the in-app
+  // Collection scene survives a page reload — same translation the
+  // /gallery route uses, just shared.
+  hydrateSavedDishesFromGallery();
+  // Cross-tab sync: if /gallery is open elsewhere and someone there
+  // adds a dish (rare but possible), pick it up live so the carousel
+  // stays in sync without a refresh.
+  galleryStore.subscribe(() => hydrateSavedDishesFromGallery());
+
   // While a DOM modal is open, hand-pinch should drive DOM clicks
   // (close button, Add button, backdrop) instead of going to the scene.
   // Mouse already drives DOM clicks natively, so only redirect for hand.
@@ -224,6 +237,9 @@ async function bootMainApp() {
     applyBackground(scene);
     scene.resize(window.innerWidth, window.innerHeight);
     scene.onEnter?.();
+    // Re-sync the recipe panel: it should only appear in the eligible
+    // scenes, but keep its open/close state across navigation.
+    syncRecipePanel();
   }
 
   // ---- Build scenes ----
@@ -247,20 +263,44 @@ async function bootMainApp() {
       cookingStore.setSelectedIngredients(picked);
       setScene(cookwareScene);
     },
-    onRecipe: () => console.log("would open recipe"),
+    onRecipe: () => cookingStore.toggleTraditionalRecipe(),
   });
 
   const cookwareScene = new CookwareScene({
     onBack: () => setScene(ingredientScene),
     onContinue: () => setScene(cookingScene),
-    onRecipe: () => console.log("would open recipe"),
+    onRecipe: () => cookingStore.toggleTraditionalRecipe(),
   });
 
   const cookingScene = new CookingScene({
     onBack: () => setScene(cookwareScene),
     onDone: () => setScene(cookingAnimationScene),
-    onRecipe: () => console.log("would open recipe"),
+    onRecipe: () => cookingStore.toggleTraditionalRecipe(),
   });
+
+  // Scenes 3/4/5 host the slide-in Traditional Recipe panel. Mount/unmount
+  // is driven by cookingStore.traditionalRecipeOpen + the current scene
+  // (so the panel stays open across scene transitions but never appears
+  // on Start, Animation, Results, or Collection).
+  const RECIPE_PANEL_SCENES = new Set();
+  let recipePanel = null;
+  function eligibleForRecipePanel() {
+    return RECIPE_PANEL_SCENES.has(currentScene);
+  }
+  function syncRecipePanel() {
+    const open = cookingStore.getState().traditionalRecipeOpen;
+    const shouldShow = open && eligibleForRecipePanel();
+    if (shouldShow && !recipePanel) {
+      recipePanel = mountTraditionalRecipePanel();
+    } else if (!shouldShow && recipePanel) {
+      recipePanel.unmount();
+      recipePanel = null;
+    }
+    // Update the recipe button label on every eligible scene so the
+    // toggle reads correctly even after navigation.
+    for (const s of RECIPE_PANEL_SCENES) s.setRecipeOpen?.(open);
+  }
+  cookingStore.subscribe(syncRecipePanel);
 
   const cookingAnimationScene = new CookingAnimationScene({
     onDone: () => setScene(resultsScene),
@@ -280,9 +320,37 @@ async function bootMainApp() {
         },
       });
     },
-    onOpenCollection: () => {
-      window.open("/gallery", "_blank");
-    },
+    onOpenCollection: () => setScene(collectionScene),
+  });
+
+  const collectionScene = new CollectionScene({
+    onBack: () => setScene(resultsScene),
+  });
+
+  // Lock in which scenes host the slide-in recipe panel + sync the
+  // initial label state in case the store was already true at boot
+  // (e.g. preserved through a reset earlier in the session).
+  RECIPE_PANEL_SCENES.add(ingredientScene);
+  RECIPE_PANEL_SCENES.add(cookwareScene);
+  RECIPE_PANEL_SCENES.add(cookingScene);
+  syncRecipePanel();
+
+  // 'R' toggles the recipe panel anywhere in eligible scenes; Esc
+  // closes it when open. Skip while typing into a text field so the
+  // modal name input doesn't fight us.
+  window.addEventListener("keydown", (e) => {
+    const tag = e.target?.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || e.target?.isContentEditable) return;
+
+    if ((e.key === "r" || e.key === "R") && eligibleForRecipePanel()) {
+      e.preventDefault();
+      cookingStore.toggleTraditionalRecipe();
+      return;
+    }
+    if (e.key === "Escape" && cookingStore.getState().traditionalRecipeOpen) {
+      e.preventDefault();
+      cookingStore.setTraditionalRecipeOpen(false);
+    }
   });
 
   // NameDishScene is no longer in the flow — the results scene's
@@ -300,6 +368,7 @@ async function bootMainApp() {
     cooking: cookingScene,
     animation: cookingAnimationScene,
     results: resultsScene,
+    collection: collectionScene,
   };
   if (typeof window !== "undefined") {
     window.__scenes = SCENES_BY_NAME;
@@ -343,6 +412,7 @@ async function bootMainApp() {
     pinching: false,
     pinchRatio: null,
     threeFinger: false,
+    fist: false,
   };
 
   const filterX = new OneEuroFilter(ONE_EURO_PARAMS);
@@ -372,11 +442,13 @@ async function bootMainApp() {
       handState.pinching = gestures.isPinching();
       handState.pinchRatio = gestures.getRatio();
       handState.threeFinger = gestures.isThreeFinger();
+      handState.fist = gestures.isFist();
 
       pointerManager.updateHand({
         x: sx,
         y: sy,
-        isDown: handState.pinching,
+        fist: handState.fist,
+        pinch: handState.pinching,
         hasHand: true,
       });
     },
@@ -386,6 +458,7 @@ async function bootMainApp() {
       gestures.cancel();
       handState.pinching = false;
       handState.threeFinger = false;
+      handState.fist = false;
       filterX.reset();
       filterY.reset();
       pointerManager.updateHand({ hasHand: false });

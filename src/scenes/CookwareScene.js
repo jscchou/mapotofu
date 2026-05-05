@@ -14,6 +14,8 @@ import {
   STOVE_REF,
 } from "../data/cookware.js";
 import { cookingStore } from "../cooking/cookingStore.js";
+import { HandButtonDwell } from "../input/HandButtonDwell.js";
+import { HandHoverPicker } from "../input/HandHoverPicker.js";
 
 // Scene 4 — Cookware Selection. Pixi at 1920×1080 design canvas with
 // uniform-scale fitting (consistent with Scenes 3 & 5).
@@ -177,6 +179,41 @@ export class CookwareScene {
     this._buildOnStoveSprite();
     this._buildCards();
     this._buildStartButton();
+
+    // Hand-hover-to-press for every clickable button. Mouse users still
+    // get instant clicks via pointerDown.
+    this.buttons = new HandButtonDwell();
+    this.buttons.register(
+      "back",
+      (x, y) => this._inCircle(x, y, this.backBtn, 32),
+      () => this.onBack()
+    );
+    this.buttons.register(
+      "recipe",
+      (x, y) => this._inRecipeBtn(x, y),
+      () => this.onRecipe()
+    );
+    this.buttons.register(
+      "start",
+      (x, y) => this._inStartBtn(x, y),
+      () => {
+        if (!this._onStoveId) return;
+        cookingStore.setSelectedCookware(this._onStoveId);
+        this.onContinue();
+      }
+    );
+
+    // Hover-to-pick: 3s of hover over a cookware card triggers grab.
+    // Skip the card already on the stove.
+    this.cardPicker = new HandHoverPicker({
+      getHoveredTarget: (x, y) => {
+        const card = this._cardAt(x, y);
+        if (!card || card.id === this._onStoveId || !card.sprite.texture)
+          return null;
+        return card;
+      },
+      onPick: (card, x, y) => this._grab(card, x, y, "hand"),
+    });
   }
 
   // ---------- lifecycle ----------
@@ -187,6 +224,11 @@ export class CookwareScene {
   }
 
   onExit() {}
+
+  setRecipeOpen(open) {
+    if (!this.recipeLabel) return;
+    this.recipeLabel.text = open ? "Hide Recipe" : "Traditional Recipe";
+  }
 
   // ---------- build ----------
 
@@ -232,7 +274,7 @@ export class CookwareScene {
     const icon = this._makeRecipeIcon();
     icon.position.set(-RECIPE_BTN.w / 2 + 38, 0);
 
-    const recipeLabel = new Text({
+    this.recipeLabel = new Text({
       text: "Traditional Recipe",
       style: new TextStyle({
         fontFamily: FONT.mono,
@@ -241,10 +283,10 @@ export class CookwareScene {
         fill: COLORS.brown,
       }),
     });
-    recipeLabel.anchor.set(0, 0.5);
-    recipeLabel.position.set(-RECIPE_BTN.w / 2 + 70, 0);
+    this.recipeLabel.anchor.set(0, 0.5);
+    this.recipeLabel.position.set(-RECIPE_BTN.w / 2 + 70, 0);
 
-    this.recipeBtn.addChild(this.recipeBtnBg, icon, recipeLabel);
+    this.recipeBtn.addChild(this.recipeBtnBg, icon, this.recipeLabel);
     this.uiLayer.addChild(this.backBtn, this.titleText, this.recipeBtn);
   }
 
@@ -299,11 +341,12 @@ export class CookwareScene {
   }
 
   _buildStove() {
-    // Soft yellow halo, hidden until drag-over
+    // Soft yellow halo, hidden until drag-over. The breathing pulse is
+    // driven via container alpha + scale in update().
     this.stoveGlow = new Graphics()
       .ellipse(0, 0, STOVE.w / 2 + 30, 130)
-      .fill({ color: COLORS.yellowBtn, alpha: 0.45 });
-    this.stoveGlow.filters = [new BlurFilter({ strength: 28 })];
+      .fill({ color: COLORS.yellowBtn, alpha: 0.6 });
+    this.stoveGlow.filters = [new BlurFilter({ strength: 32 })];
     this.stoveGlow.visible = false;
     this.stoveGlow.position.set(STOVE.x + STOVE.w / 2, STOVE.y + STOVE.h / 2);
     this.stoveLayer.addChild(this.stoveGlow);
@@ -504,10 +547,29 @@ export class CookwareScene {
     );
   }
 
-  onPointerMove({ x, y }) {
+  onPointerMove(state) {
+    const { x, y, source } = state;
     const p = this._toDesign(x, y);
 
     if (this.grabbed) {
+      // Hand grab + hand went idle. MediaPipe drops the hand on noisy
+      // frames (fast motion, partial occlusion), and PointerManager
+      // immediately reports source="mouse" then. Without a grace window
+      // the ghost gets snap-back-killed after one bad frame. Freeze the
+      // ghost during the grace, only snap back if the loss persists.
+      if (this.grabbed.source === "hand" && source !== "hand") {
+        const now = performance.now();
+        this._handGoneSince = this._handGoneSince ?? now;
+        if (now - this._handGoneSince > 600) {
+          this._snapGhostBack(this.grabbed.card, this.grabbed.ghost);
+          this.grabbed = null;
+          this._handGoneSince = null;
+          this._stoveActive = false;
+          this.stoveGlow.visible = false;
+        }
+        return;
+      }
+      this._handGoneSince = null;
       if (p.x == null) return;
       this.grabbed.ghost.position.set(p.x, p.y);
       const over = this._overStove(p.x, p.y);
@@ -515,8 +577,21 @@ export class CookwareScene {
         this._stoveActive = over;
         this.stoveGlow.visible = over;
       }
+      // Hand grab auto-drops on stove entry. Mouse keeps explicit release.
+      if (this.grabbed.source === "hand" && over) {
+        const { card, ghost } = this.grabbed;
+        this.grabbed = null;
+        this._stoveActive = false;
+        this.stoveGlow.visible = false;
+        this._completeStoveDrop(card, ghost);
+      }
       return;
     }
+
+    // The start button is only enabled once a cookware sits on the stove.
+    this.buttons?.setEnabled("start", !!this._onStoveId);
+    this.buttons?.pointerMove({ x: p.x, y: p.y, source });
+    this.cardPicker?.pointerMove({ x: p.x, y: p.y, source });
 
     if (p.x == null) {
       this._setStartHovered(false);
@@ -527,31 +602,22 @@ export class CookwareScene {
     this._setRecipeHovered(this._inRecipeBtn(p.x, p.y));
   }
 
-  onPointerDown({ x, y }) {
+  onPointerDown(state) {
+    const { x, y, source } = state;
     const p = this._toDesign(x, y);
     if (p.x == null) return;
 
-    if (this._inCircle(p.x, p.y, this.backBtn, 32)) {
-      this.onBack();
-      return;
-    }
-    if (this._inRecipeBtn(p.x, p.y)) {
-      this.onRecipe();
-      return;
-    }
-    if (this._onStoveId && this._inStartBtn(p.x, p.y)) {
-      cookingStore.setSelectedCookware(this._onStoveId);
-      this.onContinue();
-      return;
-    }
+    this.buttons?.setEnabled("start", !!this._onStoveId);
+    if (this.buttons?.pointerDown({ x: p.x, y: p.y, source })) return;
 
-    // Drag a cookware card. Skip if it's the one currently on the stove
-    // (its sprite is hidden anyway, but be explicit).
+    // Mouse click-to-grab. Hand grabs via hover dwell instead.
+    if (source !== "mouse") return;
+
     const card = this._cardAt(p.x, p.y);
     if (!card) return;
     if (card.id === this._onStoveId) return;
     if (!card.sprite.texture) return;
-    this._grab(card, p.x, p.y);
+    this._grab(card, p.x, p.y, "mouse");
   }
 
   onPointerUp({ x, y, cancelled }) {
@@ -566,8 +632,12 @@ export class CookwareScene {
       this._snapGhostBack(card, ghost);
       return;
     }
+    this._completeStoveDrop(card, ghost);
+  }
 
-    // Successful drop on stove. Restore any previous on-stove card first.
+  // The successful-drop path, factored out so both mouse release and
+  // hand auto-drop on stove entry land here.
+  _completeStoveDrop(card, ghost) {
     if (this._onStoveId && this._onStoveId !== card.id) {
       const prev = this.cards.get(this._onStoveId);
       if (prev) {
@@ -586,16 +656,27 @@ export class CookwareScene {
   }
 
   getPointerDwell() {
-    return 0;
+    return Math.max(
+      this.buttons?.getDwellProgress() ?? 0,
+      this.cardPicker?.getDwellProgress() ?? 0
+    );
   }
   getState() {
     return { grabbedId: this.grabbed?.card?.id ?? null, basketCount: 0 };
   }
-  update() {}
+  update(now) {
+    if (this.stoveGlow.visible) {
+      const t = (now ?? performance.now()) / 1000;
+      const wave = (Math.sin(t * 4) + 1) / 2;
+      this.stoveGlow.alpha = 0.7 + wave * 0.3;
+      const s = 1.0 + 0.05 * wave;
+      this.stoveGlow.scale.set(s);
+    }
+  }
 
   // ---------- drag helpers ----------
 
-  _grab(card, designX, designY) {
+  _grab(card, designX, designY, source = "mouse") {
     // Hide the card sprite while the ghost is in flight
     card.sprite.visible = false;
 
@@ -615,7 +696,7 @@ export class CookwareScene {
     ghost.position.set(designX, designY);
     this.dragLayer.addChild(ghost);
 
-    this.grabbed = { card, ghost };
+    this.grabbed = { card, ghost, source };
   }
 
   _snapGhostBack(card, ghost) {

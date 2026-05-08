@@ -11,6 +11,14 @@ import basketUrl from "../assets/FoodPrepBasket.png";
 import { ingredients as INGREDIENT_DATA } from "../data/ingredients.js";
 import { HandButtonDwell } from "../input/HandButtonDwell.js";
 import { HandHoverPicker } from "../input/HandHoverPicker.js";
+import {
+  buttonClick,
+  buttonDisabled,
+  hoverTick,
+  itemPickup,
+  itemDropBasket,
+  itemRejected,
+} from "../audio/soundEngine.js";
 
 // ---------- Design canvas ----------
 // Everything is laid out in 1920x1080 design coords. The root Container is
@@ -162,6 +170,9 @@ export class IngredientScene {
     this._recipeHovered = false;
     this._continueHovered = false;
     this._basketActive = false;
+    // Last hovered tile id, so we can fire a single hoverTick on the
+    // edge instead of every frame.
+    this._lastHoveredTileId = null;
 
     this._buildPanels();
     this._buildBasket();
@@ -178,18 +189,29 @@ export class IngredientScene {
     this.buttons.register(
       "back",
       (x, y) => this._inCircle(x, y, this.backBtn, 32),
-      () => this.onBack()
+      () => {
+        buttonClick();
+        this.onBack();
+      }
     );
     this.buttons.register(
       "recipe",
       (x, y) => this._inRecipeBtn(x, y),
-      () => this.onRecipe()
+      () => {
+        buttonClick();
+        this.onRecipe();
+      }
     );
     this.buttons.register(
       "continue",
       (x, y) => this._inContinueBtn(x, y),
       () => {
-        if (this._isValid()) this.onContinue();
+        if (this._isValid()) {
+          buttonClick();
+          this.onContinue();
+        } else {
+          buttonDisabled();
+        }
       }
     );
 
@@ -804,6 +826,14 @@ export class IngredientScene {
     this._setBackHovered(this._inCircle(p.x, p.y, this.backBtn, 32));
     this._setRecipeHovered(this._inRecipeBtn(p.x, p.y));
     this._setContinueHovered(this._inContinueBtn(p.x, p.y));
+
+    // Tile hover blip — fire once on the edge, regardless of input source.
+    const tile = this._tileAt(p.x, p.y);
+    const hoveredId = tile && tile.hasAsset ? tile.id : null;
+    if (hoveredId !== this._lastHoveredTileId) {
+      this._lastHoveredTileId = hoveredId;
+      if (hoveredId) hoverTick();
+    }
   }
 
   onPointerDown(state) {
@@ -884,6 +914,7 @@ export class IngredientScene {
   // ---------- Drag / drop internals ----------
 
   _grab(tile, designX, designY, source = "mouse") {
+    itemPickup();
     const ghost = new Container();
     ghost.label = `Ghost:${tile.id}`;
 
@@ -908,6 +939,7 @@ export class IngredientScene {
   }
 
   _snapGhostBack(tile, ghost) {
+    itemRejected();
     const from = { x: ghost.x, y: ghost.y };
     const to = {
       x: tile.origin.x + tile.size / 2,
@@ -920,6 +952,7 @@ export class IngredientScene {
   }
 
   _addToBasket(tile, ghost) {
+    itemDropBasket();
     // Mutex on tofu/oil — validation requires exactly one of each, so a
     // new drop in those categories replaces any prior one in the basket.
     if (tile.category === "tofu" || tile.category === "oil") {

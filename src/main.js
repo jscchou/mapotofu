@@ -13,6 +13,11 @@ import { PointerManager } from "./input/PointerManager.js";
 import { DebugOverlay } from "./ui/DebugOverlay.js";
 import { mountAddToCollectionModal } from "./ui/AddToCollectionModal.js";
 import { mountTraditionalRecipePanel } from "./ui/TraditionalRecipePanel.js";
+import { mountMuteButton } from "./ui/MuteButton.js";
+import {
+  installUserGestureUnlock,
+  sceneTransition,
+} from "./audio/soundEngine.js";
 import { cookingStore } from "./cooking/cookingStore.js";
 import { hydrateSavedDishesFromGallery } from "./gallery/hydrate.js";
 import { galleryStore } from "./gallery/galleryStore.js";
@@ -171,6 +176,12 @@ async function bootMainApp() {
   });
   document.getElementById("app").appendChild(app.canvas);
 
+  // Wake up the Web Audio context on the first user gesture and mount
+  // the floating mute toggle. /gallery boots through a separate path
+  // (galleryPage.js) and intentionally skips the mute button.
+  installUserGestureUnlock(window);
+  mountMuteButton();
+
   // Best-effort: warm up the fonts Pixi will need so first paint isn't fallback.
   await Promise.all([
     document.fonts.load('400 1em "Intel One Mono"').catch(() => {}),
@@ -225,6 +236,7 @@ async function bootMainApp() {
   }
 
   function setScene(scene) {
+    const isInitialScene = currentScene == null;
     if (currentScene) {
       currentScene.onExit?.();
       app.stage.removeChild(currentScene.root);
@@ -240,6 +252,10 @@ async function bootMainApp() {
     // Re-sync the recipe panel: it should only appear in the eligible
     // scenes, but keep its open/close state across navigation.
     syncRecipePanel();
+    // Whoosh on every navigation, but skip the very first paint —
+    // there's nothing to "transition" away from at boot, and the
+    // AudioContext won't be unlocked yet anyway.
+    if (!isInitialScene) sceneTransition();
   }
 
   // ---- Build scenes ----

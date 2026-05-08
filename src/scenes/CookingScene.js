@@ -12,6 +12,15 @@ import { cookingStore } from "../cooking/cookingStore.js";
 import { findCookware, STOVE_REF } from "../data/cookware.js";
 import { HandButtonDwell } from "../input/HandButtonDwell.js";
 import { HandHoverPicker } from "../input/HandHoverPicker.js";
+import {
+  buttonClick,
+  hoverTick,
+  itemPickup,
+  itemDropPot,
+  itemRejected,
+  fireAdjust,
+  cookingComplete,
+} from "../audio/soundEngine.js";
 
 // Scene 5 — Cookstation.
 //
@@ -186,6 +195,8 @@ export class CookingScene {
     this._panActive = false;
     this._doneHovered = false;
     this._recipeHovered = false;
+    this._lastHoveredTileId = null;
+    this._lastVisualHeatLevel = null;
 
     this._wheelHandler = null;
     this._unsub = null;
@@ -205,17 +216,26 @@ export class CookingScene {
     this.buttons.register(
       "back",
       (x, y) => this._inCircle(x, y, this.backBtn, 32),
-      () => this.onBack()
+      () => {
+        buttonClick();
+        this.onBack();
+      }
     );
     this.buttons.register(
       "recipe",
       (x, y) => this._inRecipeBtn(x, y),
-      () => this.onRecipe()
+      () => {
+        buttonClick();
+        this.onRecipe();
+      }
     );
     this.buttons.register(
       "done",
       (x, y) => this._inDoneBtn(x, y),
-      () => this.onDone()
+      () => {
+        cookingComplete();
+        this.onDone();
+      }
     );
 
     // Hover-to-pick for ingredient tiles.
@@ -595,6 +615,17 @@ export class CookingScene {
 
   _updateHeatSliderVisual() {
     const level = cookingStore.getState().currentHeatLevel ?? 0;
+    // Crackle on each visible level change. _lastVisualHeatLevel starts
+    // null so the first paint after entering the scene doesn't fire a
+    // spurious crackle. fireAdjust is internally throttled, so even the
+    // live-drag path firing every frame can't queue up a wall of bursts.
+    if (
+      this._lastVisualHeatLevel != null &&
+      level !== this._lastVisualHeatLevel
+    ) {
+      fireAdjust(level / (HEAT_SLIDER.steps - 1));
+    }
+    this._lastVisualHeatLevel = level;
     const xs = this._heatStepXs();
     const idx = Math.max(0, Math.min(HEAT_SLIDER.steps - 1, level));
     this.heatKnob.position.x = xs[idx];
@@ -977,6 +1008,15 @@ export class CookingScene {
     }
     this._setDoneHovered(this._inDoneBtn(p.x, p.y));
     this._setRecipeHovered(this._inRecipeBtn(p.x, p.y));
+
+    // Tile hover blip on the edge.
+    const tile = this._tileAt(p.x, p.y);
+    const hoveredId =
+      tile && tile.hasAsset && tile.sprite.texture ? tile.id : null;
+    if (hoveredId !== this._lastHoveredTileId) {
+      this._lastHoveredTileId = hoveredId;
+      if (hoveredId) hoverTick();
+    }
   }
 
   onPointerDown(state) {
@@ -1073,6 +1113,7 @@ export class CookingScene {
   // ---------- drag helpers ----------
 
   _grabIngredient(tile, designX, designY, source = "mouse") {
+    itemPickup();
     const ghost = new Container();
     const tex = tile.sprite.texture;
     const sp = new Sprite(tex);
@@ -1091,6 +1132,7 @@ export class CookingScene {
   }
 
   _snapGhostBack(tile, ghost) {
+    itemRejected();
     // Tile origin is in tilesContent coords; visual position factors scroll.
     const from = { x: ghost.x, y: ghost.y };
     const to = {
@@ -1116,6 +1158,7 @@ export class CookingScene {
   }
 
   _dropIntoPan(tile, ghost) {
+    itemDropPot();
     cookingStore.addToPot({ id: tile.id, name: tile.name });
 
     // Phyllotaxis ("sunflower") placement: each new drop lands at a

@@ -9,6 +9,7 @@ import {
 import dishPlaceholderUrl from "../assets/illustrations/MapoTofuillustration.png";
 import { cookingStore } from "../cooking/cookingStore.js";
 import { HandButtonDwell } from "../input/HandButtonDwell.js";
+import { buttonClick, hoverTick } from "../audio/soundEngine.js";
 
 // Results scene — shown after the cooking animation finishes.
 // Displays the user's "finished" dish + the chronological list of
@@ -128,17 +129,26 @@ export class ResultsScene {
     this.buttons.register(
       "back",
       (x, y) => this._inCircle(x, y, this.backBtn, 32),
-      () => this.onBack()
+      () => {
+        buttonClick();
+        this.onBack();
+      }
     );
     this.buttons.register(
       "collection",
       (x, y) => this._inCollectionBtn(x, y),
-      () => this.onOpenCollection()
+      () => {
+        buttonClick();
+        this.onOpenCollection();
+      }
     );
     this.buttons.register(
       "add",
       (x, y) => this._inAddBtn(x, y),
-      () => this.onAddToCollection()
+      () => {
+        buttonClick();
+        this.onAddToCollection();
+      }
     );
   }
 
@@ -424,6 +434,7 @@ export class ResultsScene {
     ta.addEventListener("input", () => {
       cookingStore.setDishRecipe(ta.value);
     });
+    ta.addEventListener("focus", () => hoverTick());
 
     wrap.appendChild(ta);
     document.body.appendChild(wrap);

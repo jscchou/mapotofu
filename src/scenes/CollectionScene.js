@@ -10,6 +10,11 @@ import dishPlaceholderUrl from "../assets/illustrations/MapoTofuillustration.png
 import { cookingStore } from "../cooking/cookingStore.js";
 import { formatRelativeTime } from "../util/relativeTime.js";
 import { HandButtonDwell } from "../input/HandButtonDwell.js";
+import {
+  buttonClick,
+  hoverTick,
+  newGalleryEntry,
+} from "../audio/soundEngine.js";
 
 // Mapo Tofu Collection — horizontal carousel of saved dishes plus an
 // in-place detail view. Two modes share one scene so the back arrow
@@ -130,6 +135,7 @@ export class CollectionScene {
       "back",
       (x, y) => this._inCircle(x, y, BACK_BTN.cx, BACK_BTN.cy, BACK_BTN.r + 6),
       () => {
+        buttonClick();
         if (this._mode === "detail") this._setMode("carousel");
         else this.onBack();
       }
@@ -137,19 +143,28 @@ export class CollectionScene {
     this.buttons.register(
       "leftArrow",
       (x, y) => this._inCircle(x, y, ARROW_BTN.leftX, ARROW_BTN.y, ARROW_BTN.r + 6),
-      () => this._setCarouselTarget(this._index - 1)
+      () => {
+        buttonClick();
+        this._setCarouselTarget(this._index - 1);
+      }
     );
     this.buttons.register(
       "rightArrow",
       (x, y) => this._inCircle(x, y, ARROW_BTN.rightX, ARROW_BTN.y, ARROW_BTN.r + 6),
-      () => this._setCarouselTarget(this._index + 1)
+      () => {
+        buttonClick();
+        this._setCarouselTarget(this._index + 1);
+      }
     );
     this.buttons.register(
       "centeredCard",
       (x, y) => this._isOverCenteredCard(x, y),
       () => {
         const dish = this._dishes[this._index];
-        if (dish) this._showDetailFor(dish);
+        if (dish) {
+          buttonClick();
+          this._showDetailFor(dish);
+        }
       },
       { handOnly: true }
     );
@@ -389,7 +404,13 @@ export class CollectionScene {
     const sorted = [...all].sort((a, b) =>
       String(b.createdAt ?? "").localeCompare(String(a.createdAt ?? ""))
     );
+    // Soft chime when a new entry actually grows the list (e.g. another
+    // tab posted via BroadcastChannel). The first refresh pass after
+    // mount has _dishes = [] which we treat as the baseline, not a
+    // "new arrival", so no chime fires when the carousel just opens.
+    const grew = this._dishes.length > 0 && sorted.length > this._dishes.length;
     this._dishes = sorted;
+    if (grew) newGalleryEntry();
 
     // Clamp index to bounds before rebuilding cards
     if (this._index >= sorted.length) this._index = Math.max(0, sorted.length - 1);
@@ -653,10 +674,17 @@ export class CollectionScene {
 
     // Track which card (if any) the pointer is over so the update loop
     // can elevate it. Only meaningful in carousel mode.
+    const previousHover = this._hoveredCardIndex;
     if (this._mode === "carousel") {
       this._hoveredCardIndex = this._cardIndexAt(p.x, p.y);
     } else {
       this._hoveredCardIndex = null;
+    }
+    if (
+      this._hoveredCardIndex != null &&
+      this._hoveredCardIndex !== previousHover
+    ) {
+      hoverTick();
     }
   }
 

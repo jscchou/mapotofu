@@ -12,6 +12,7 @@ import { generateDishImage } from "../cooking/imageApi.js";
 import { ingredients as INGREDIENT_DATA } from "../data/ingredients.js";
 import { mountCookingLoader } from "../ui/CookingLoader.js";
 import { HandButtonDwell } from "../input/HandButtonDwell.js";
+import { buttonClick, imageReveal } from "../audio/soundEngine.js";
 
 // Build the request body for /api/generate-dish from the shared store.
 // Walks the pot in drag-order, splits items into the four buckets the
@@ -94,6 +95,7 @@ export class CookingAnimationScene {
       "retry",
       (x, y) => this._inRetry(x, y),
       () => {
+        buttonClick();
         this._reset();
         this._startGeneration();
       }
@@ -263,6 +265,7 @@ export class CookingAnimationScene {
   _beginReveal(tex) {
     this._stage = "reveal";
     this._unmountLoader();
+    imageReveal();
 
     // Size the dish sprite to ~520px wide, preserving aspect
     const tw = tex.width || 1;

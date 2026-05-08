@@ -16,6 +16,12 @@ import {
 import { cookingStore } from "../cooking/cookingStore.js";
 import { HandButtonDwell } from "../input/HandButtonDwell.js";
 import { HandHoverPicker } from "../input/HandHoverPicker.js";
+import {
+  buttonClick,
+  itemPickup,
+  itemRejected,
+  cookwareLand,
+} from "../audio/soundEngine.js";
 
 // Scene 4 — Cookware Selection. Pixi at 1920×1080 design canvas with
 // uniform-scale fitting (consistent with Scenes 3 & 5).
@@ -186,18 +192,25 @@ export class CookwareScene {
     this.buttons.register(
       "back",
       (x, y) => this._inCircle(x, y, this.backBtn, 32),
-      () => this.onBack()
+      () => {
+        buttonClick();
+        this.onBack();
+      }
     );
     this.buttons.register(
       "recipe",
       (x, y) => this._inRecipeBtn(x, y),
-      () => this.onRecipe()
+      () => {
+        buttonClick();
+        this.onRecipe();
+      }
     );
     this.buttons.register(
       "start",
       (x, y) => this._inStartBtn(x, y),
       () => {
         if (!this._onStoveId) return;
+        buttonClick();
         cookingStore.setSelectedCookware(this._onStoveId);
         this.onContinue();
       }
@@ -638,7 +651,10 @@ export class CookwareScene {
   // The successful-drop path, factored out so both mouse release and
   // hand auto-drop on stove entry land here.
   _completeStoveDrop(card, ghost) {
+    // Swapping out a previous cookware → bloop the displaced one
+    // before clanging the new one onto the burner.
     if (this._onStoveId && this._onStoveId !== card.id) {
+      itemRejected();
       const prev = this.cards.get(this._onStoveId);
       if (prev) {
         prev.frame.alpha = 1;
@@ -653,6 +669,7 @@ export class CookwareScene {
     this._showOnStove(card.id);
     this._dimSourceCard(card.id);
     this._drawStartBtn();
+    cookwareLand();
   }
 
   getPointerDwell() {
@@ -677,6 +694,7 @@ export class CookwareScene {
   // ---------- drag helpers ----------
 
   _grab(card, designX, designY, source = "mouse") {
+    itemPickup();
     // Hide the card sprite while the ghost is in flight
     card.sprite.visible = false;
 
@@ -700,6 +718,7 @@ export class CookwareScene {
   }
 
   _snapGhostBack(card, ghost) {
+    itemRejected();
     const cw = card.cookware;
     const cx = card.layout.imgX + cw.cardImage.width / 2;
     const cy = card.layout.imgY + cw.cardImage.height / 2;

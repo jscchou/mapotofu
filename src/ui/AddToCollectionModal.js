@@ -11,6 +11,11 @@ import { cookingStore } from "../cooking/cookingStore.js";
 import { galleryStore } from "../gallery/galleryStore.js";
 import { imageUrlToThumbnailDataUrl } from "../util/imageThumbnail.js";
 import dishPlaceholderUrl from "../assets/illustrations/MapoTofuillustration.png";
+import {
+  addToGallery,
+  buttonClick,
+  hoverTick,
+} from "../audio/soundEngine.js";
 
 const DESIGN_W = 1920;
 const DESIGN_H = 1080;
@@ -121,6 +126,7 @@ export function mountAddToCollectionModal({ onClose, onAdded } = {}) {
     };
 
     cookingStore.addSavedDish(dish);
+    addToGallery();
 
     // For persistence, downscale the (often multi-MB Gemini base64)
     // image to a small JPEG thumbnail so localStorage doesn't choke
@@ -163,9 +169,17 @@ export function mountAddToCollectionModal({ onClose, onAdded } = {}) {
   }
   window.addEventListener("keydown", onKeyDown);
 
-  backdrop.addEventListener("click", close);
-  closeBtn.addEventListener("click", close);
+  const closeWithSound = () => {
+    buttonClick();
+    close();
+  };
+  backdrop.addEventListener("click", closeWithSound);
+  closeBtn.addEventListener("click", closeWithSound);
   addBtn.addEventListener("click", submit);
+
+  // Spec: text-field focus inside Scene 6 plays a hover tick.
+  dishInput.addEventListener("focus", () => hoverTick());
+  userInput.addEventListener("focus", () => hoverTick());
 
   // Stop clicks on the modal panel from bubbling up to the backdrop
   modal.addEventListener("click", (e) => e.stopPropagation());

@@ -1,5 +1,6 @@
 import { Container, Graphics, Text, TextStyle, Sprite, Assets } from "pixi.js";
 import dishUrl from "../assets/illustrations/MapoTofuillustration.png";
+import { buttonClick, hoverTick } from "../audio/soundEngine.js";
 
 const FONT_STACK =
   '"JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace';
@@ -121,6 +122,7 @@ export class StartScene {
     if (hovered === this._hovered) return;
     this._hovered = hovered;
     this._drawButton(hovered);
+    if (hovered) hoverTick();
   }
 
   resize(screenW, screenH) {
@@ -172,6 +174,7 @@ export class StartScene {
     }
     if (performance.now() - this._dwellStart >= this.dwellMs) {
       this._dwellStart = null;
+      buttonClick();
       this.onStartPressed();
     }
   }
@@ -180,6 +183,7 @@ export class StartScene {
     if (x == null) return;
     if (pointInRect(x, y, this.getStartButtonBounds())) {
       this._dwellStart = null;
+      buttonClick();
       this.onStartPressed();
     }
   }

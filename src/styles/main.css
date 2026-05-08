@@ -898,3 +898,38 @@ body.gallery-page {
   height: 1px;
   background: #ffd2a8;
 }
+
+/* ============================================================
+   Mute toggle — top-right floating button. Sits above scene UI
+   but below modals (z-index 600 < .atc-overlay 800).
+   ============================================================ */
+
+.mute-btn {
+  position: fixed;
+  top: 14px;
+  right: 14px;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  z-index: 600;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  transition: background 120ms ease, transform 120ms ease;
+}
+
+.mute-btn:hover {
+  background: rgba(255, 255, 255, 1);
+  transform: scale(1.05);
+}
+
+.mute-btn-muted {
+  background: rgba(231, 220, 200, 0.9);
+}

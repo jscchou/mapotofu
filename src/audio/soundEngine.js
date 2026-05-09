@@ -10,6 +10,7 @@ const MUTE_STORAGE_KEY = "mapotofu.muted";
 const MASTER_VOLUME_DEFAULT = 0.7;
 
 const listeners = new Set();
+const unlockListeners = new Set();
 
 let ctx = null;
 let masterGain = null;
@@ -107,6 +108,41 @@ export function onMuteChange(fn) {
   return () => listeners.delete(fn);
 }
 
+// True once the AudioContext has been created AND resumed via a user
+// gesture. Sounds are guaranteed-silent before this. Used by the
+// "click to enable sound" banner so it knows when to dismiss.
+export function isAudioUnlocked() {
+  return !!ctx && ctx.state === "running";
+}
+
+// Subscribe to the moment the audio unlocks. If audio is already
+// unlocked at the time of subscription, the callback fires
+// synchronously (so callers can write `onAudioUnlock(dismissBanner)`
+// without an extra isAudioUnlocked() check).
+export function onAudioUnlock(fn) {
+  if (isAudioUnlocked()) {
+    try {
+      fn();
+    } catch (e) {
+      console.warn("soundEngine: unlock listener threw", e);
+    }
+    return () => {};
+  }
+  unlockListeners.add(fn);
+  return () => unlockListeners.delete(fn);
+}
+
+function notifyUnlock() {
+  for (const fn of unlockListeners) {
+    try {
+      fn();
+    } catch (e) {
+      console.warn("soundEngine: unlock listener threw", e);
+    }
+  }
+  unlockListeners.clear();
+}
+
 // ---------- AudioContext warm-up ----------
 //
 // Call once during app boot. This installs one-shot listeners on common
@@ -117,8 +153,19 @@ export function installUserGestureUnlock(target = window) {
   const events = ["pointerdown", "mousedown", "touchstart", "keydown"];
   const handler = () => {
     const c = ensureContext();
-    if (c && c.state === "suspended") {
-      c.resume().catch(() => {});
+    if (!c) {
+      for (const ev of events) target.removeEventListener(ev, handler, true);
+      return;
+    }
+    const fireUnlock = () => {
+      if (c.state === "running") notifyUnlock();
+    };
+    if (c.state === "suspended") {
+      c.resume()
+        .then(fireUnlock)
+        .catch(() => {});
+    } else {
+      fireUnlock();
     }
     for (const ev of events) target.removeEventListener(ev, handler, true);
   };

@@ -14,6 +14,7 @@ import { DebugOverlay } from "./ui/DebugOverlay.js";
 import { mountAddToCollectionModal } from "./ui/AddToCollectionModal.js";
 import { mountTraditionalRecipePanel } from "./ui/TraditionalRecipePanel.js";
 import { mountMuteButton } from "./ui/MuteButton.js";
+import { mountAudioUnlockBanner } from "./ui/AudioUnlockBanner.js";
 import {
   installUserGestureUnlock,
   sceneTransition,
@@ -181,6 +182,12 @@ async function bootMainApp() {
   // (galleryPage.js) and intentionally skips the mute button.
   installUserGestureUnlock(window);
   mountMuteButton();
+  // Hand-tracking gestures don't count as user activation for the
+  // Web Audio API, so a webcam-only player would never hear sound
+  // without a single up-front physical interaction. The banner asks
+  // for that one click/key/touch and dismisses itself the moment
+  // the AudioContext flips to "running".
+  mountAudioUnlockBanner();
 
   // Best-effort: warm up the fonts Pixi will need so first paint isn't fallback.
   await Promise.all([

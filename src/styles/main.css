@@ -933,3 +933,43 @@ body.gallery-page {
 .mute-btn-muted {
   background: rgba(231, 220, 200, 0.9);
 }
+
+/* ============================================================
+   Audio-unlock banner — shown until the player makes a real DOM
+   gesture (click/key/touch). Hand-tracking events don't count
+   for the Web Audio user-activation requirement, so a webcam-only
+   player needs exactly one physical interaction here to enable
+   sound for the rest of the session.
+   ============================================================ */
+
+.audio-unlock-banner {
+  position: fixed;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.1);
+  font-family: "Intel One Mono", "JetBrains Mono", ui-monospace, monospace;
+  font-size: 14px;
+  color: #2a2a2a;
+  pointer-events: none; /* clicks pass through; the engine catches them */
+  z-index: 700; /* above mute btn (600), below modals (800) */
+  transition: opacity 240ms ease, transform 240ms ease;
+}
+
+.audio-unlock-banner .audio-unlock-icon {
+  font-size: 16px;
+}
+
+.audio-unlock-banner-fade {
+  opacity: 0;
+  transform: translate(-50%, -8px);
+}

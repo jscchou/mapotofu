@@ -18,7 +18,10 @@ function initialState() {
     selectedCookware: null,
     potOrder: [],
     recipeLog: [],
-    currentHeatLevel: 0,
+    // 1 (small) is the default for the 3-position heat selector — heat
+    // 0 only exists as a transient "no selection yet" state for any
+    // upstream code path that hasn't run through Scene 5 yet.
+    currentHeatLevel: 1,
     dishImageUrl: null,
     dishTitle: "",
     dishRecipe: "",
@@ -131,6 +134,26 @@ export const cookingStore = {
   // through the cook flow).
   setSavedDishes(dishes) {
     state.savedDishes = Array.isArray(dishes) ? [...dishes] : [];
+    notify();
+  },
+
+  // Clears in-progress cooking state (pot contents, recipe log, heat
+  // level, dish-image fields) without touching the player's earlier
+  // choices (selectedIngredients, selectedCookware) or persistent
+  // collections (savedDishes, traditionalRecipeOpen). Used by the
+  // "Go Back" button on the missing-tofu validation modal so the
+  // player can re-cook from scratch with the same ingredient + pan
+  // selection.
+  clearCookingProgress() {
+    state.potOrder = [];
+    state.recipeLog = [];
+    // Reset to the default "small" snap, matching the slider's
+    // default position when the scene first opens.
+    state.currentHeatLevel = 1;
+    state.dishImageUrl = null;
+    state.dishTitle = "";
+    state.dishRecipe = "";
+    state.dishNote = "";
     notify();
   },
 

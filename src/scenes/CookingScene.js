@@ -9,9 +9,13 @@ import {
 } from "pixi.js";
 import stoveUrl from "../assets/cookware/Stove.png";
 import { cookingStore } from "../cooking/cookingStore.js";
+import { heatLevelName } from "../cooking/recipeText.js";
 import { findCookware, STOVE_REF } from "../data/cookware.js";
+import { ingredients as INGREDIENT_DATA } from "../data/ingredients.js";
 import { HandButtonDwell } from "../input/HandButtonDwell.js";
 import { HandHoverPicker } from "../input/HandHoverPicker.js";
+import { mountMissingTofuModal } from "../ui/MissingTofuModal.js";
+import { showFireOffToast } from "../ui/FireOffToast.js";
 import {
   buttonClick,
   hoverTick,
@@ -103,15 +107,41 @@ const RIGHT_PANEL = {
 
 const STOVE = { x: 700, y: 320, w: 496, h: 517 };
 
+// Three-position discrete heat selector. Positions are fractions of
+// the track (so resizing the track doesn't break the layout). The
+// fillFraction array tells the orange progress bar how far to grow at
+// each heat level — heat 0 is "off, before any selection" and only
+// reachable as initial state, since snap targets are 1/2/3 only.
+//
+// Positions: small flame's left edge sits at the track's left end,
+// large group's right edge sits at the track's right end. The math:
+// small icon 40 px → half=20 → 20/550 ≈ 0.036; large group 162 px →
+// half=81 → (550-81)/550 ≈ 0.853. Medium stays centered. With these
+// extremes the three levels visually span the full slider, exactly
+// what the player needs to read level differences at a glance.
+//
+// `cy` and `flameY` shifted down again so the slider sits well below
+// the stove area + cookware handle (handle bottom ≈ y=867 for the wok
+// — see src/data/cookware.js for the exact offsets).
 const HEAT_SLIDER = {
   cx: STOVE.x + STOVE.w / 2, // 948
-  cy: 893,
+  cy: 1020,
   trackW: 550,
   trackH: 14,
   knobR: 34.5,
-  flameY: 833, // above the track
-  steps: 6, // levels 0..5
+  flameY: 960, // above the track — flames are visual labels, not on it
+  steps: 3, // 1 = small, 2 = medium, 3 = large
+  // Medium sits at 0.45 — the geometric midpoint between small (0.04)
+  // and large (0.85) — so the small→medium and medium→large gaps look
+  // visually balanced rather than skewed toward the right.
+  positions: [0.04, 0.45, 0.85], // small left-aligned, large right-aligned
+  fillFraction: [0, 0.04, 0.45, 0.85], // fill ends at the knob position
+  iconSize: [0, 40, 44, 50], // px per flame, indexed by level
+  iconCount: [0, 1, 2, 3], // number of flames per level
+  iconGap: 6, // gap between flames in level-2 + level-3 groups
 };
+
+const FIRE_ICON_URL = "/Fire-small.png";
 
 const DONE_BTN = {
   cx: RIGHT_PANEL.x + RIGHT_PANEL.w - 419 / 2, // right-aligned with right panel
@@ -147,7 +177,7 @@ function recipeEntryText(entry) {
     return `→ Added ${entry.value?.name ?? "ingredient"}`;
   }
   if (entry.type === "heat") {
-    return `→ Set heat to ${entry.value}`;
+    return `→ Set heat to ${heatLevelName(entry.value)}`;
   }
   return "→ ?";
 }
@@ -197,6 +227,17 @@ export class CookingScene {
     this._recipeHovered = false;
     this._lastHoveredTileId = null;
     this._lastVisualHeatLevel = null;
+    // Pan hover/off-pan accumulators for the hand-grab preview window
+    // (replaces the old instant auto-drop-on-entry behaviour).
+    this._panOverSince = null;
+    this._panOffSince = null;
+    // Heat slider state. _sliderDragging gates the settled-paint path
+    // so it doesn't fight the drag handler over the knob's position.
+    // _heatTweenId is bumped each time we kick off a snap animation so
+    // a newer tween cancels older ones cleanly.
+    this._sliderDragging = false;
+    this._heatTweenId = 0;
+    this._currentFillFraction = 0;
 
     this._wheelHandler = null;
     this._unsub = null;
@@ -233,6 +274,14 @@ export class CookingScene {
       "done",
       (x, y) => this._inDoneBtn(x, y),
       () => {
+        // Validation gate: tofu must be in the pot before the dish is
+        // sent to the Gemini API. If it's missing, show the blocking
+        // modal — Go Back resets cooking progress so the player can
+        // try again with a clean pot. Gemini is never called.
+        if (!this._potHasTofu()) {
+          this._showMissingTofuModal();
+          return;
+        }
         cookingComplete();
         this.onDone();
       }
@@ -271,6 +320,27 @@ export class CookingScene {
     this._updateScrollbar();
     this._unsub = cookingStore.subscribe(() => this._onStoreUpdate());
     this._attachWheelHandler();
+
+    // Keyboard shortcuts for the heat slider — 1/2/3 jumps to that
+    // level, ArrowLeft/ArrowRight steps. Skipped while typing in any
+    // text field so the AddToCollection modal's name input still works.
+    this._heatKeyHandler = (e) => {
+      const tag = e.target?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || e.target?.isContentEditable)
+        return;
+      const current = cookingStore.getState().currentHeatLevel || 1;
+      if (e.key === "1" || e.key === "2" || e.key === "3") {
+        e.preventDefault();
+        this._applyHeatLevel(Number(e.key));
+      } else if (e.key === "ArrowLeft" && current > 1) {
+        e.preventDefault();
+        this._applyHeatLevel(current - 1);
+      } else if (e.key === "ArrowRight" && current < 3) {
+        e.preventDefault();
+        this._applyHeatLevel(current + 1);
+      }
+    };
+    window.addEventListener("keydown", this._heatKeyHandler);
   }
 
   onExit() {
@@ -282,6 +352,10 @@ export class CookingScene {
     if (this._heatLogTimer) {
       clearTimeout(this._heatLogTimer);
       this._heatLogTimer = null;
+    }
+    if (this._heatKeyHandler) {
+      window.removeEventListener("keydown", this._heatKeyHandler);
+      this._heatKeyHandler = null;
     }
   }
 
@@ -549,20 +623,26 @@ export class CookingScene {
   _buildHeatSlider() {
     this.heatSlider = new Container();
 
-    // Track
+    // Track + fill — shared Graphics, repainted via _drawHeatTrack(fraction).
     this.heatTrackBg = new Graphics();
     this._drawHeatTrack(0); // empty fill initially
     this.heatSlider.addChild(this.heatTrackBg);
 
-    // Flames above track
+    // Three flame-icon groups above the track (1 / 2 / 3 flames).
+    // Sprites are populated once /Fire-small.png loads — until then
+    // the groups are present but empty so the layout doesn't shift.
     const xs = this._heatStepXs();
-    for (let i = 0; i < HEAT_SLIDER.steps; i++) {
-      const flame = this._makeFlame(20, 28);
-      flame.position.set(xs[i], HEAT_SLIDER.flameY);
-      this.heatSlider.addChild(flame);
+    this.flameGroups = [];
+    for (let level = 1; level <= 3; level++) {
+      const group = new Container();
+      group.label = `FlameGroup-${level}`;
+      group.position.set(xs[level - 1], HEAT_SLIDER.flameY);
+      this.heatSlider.addChild(group);
+      this.flameGroups.push(group);
     }
+    this._loadFlameSprites();
 
-    // Knob
+    // Knob — same dark grey circle + indicator as before.
     this.heatKnob = new Container();
     this.heatKnobCircle = new Graphics()
       .circle(0, 0, HEAT_SLIDER.knobR)
@@ -577,17 +657,46 @@ export class CookingScene {
     this.uiLayer.addChild(this.heatSlider);
   }
 
-  _heatStepXs() {
-    const x0 = HEAT_SLIDER.cx - HEAT_SLIDER.trackW / 2;
-    const x1 = HEAT_SLIDER.cx + HEAT_SLIDER.trackW / 2;
-    const xs = [];
-    for (let i = 0; i < HEAT_SLIDER.steps; i++) {
-      xs.push(x0 + (i / (HEAT_SLIDER.steps - 1)) * (x1 - x0));
+  // Async — sprites materialize once the texture lands. Gates each
+  // group's flame count + size by HEAT_SLIDER.iconCount/iconSize.
+  async _loadFlameSprites() {
+    let tex;
+    try {
+      tex = await Assets.load(FIRE_ICON_URL);
+    } catch (e) {
+      console.warn("CookingScene: failed to load Fire-small.png", e);
+      return;
     }
-    return xs;
+    if (!this.flameGroups) return; // scene torn down before load completed
+    for (let level = 1; level <= 3; level++) {
+      const group = this.flameGroups[level - 1];
+      const count = HEAT_SLIDER.iconCount[level];
+      const size = HEAT_SLIDER.iconSize[level];
+      const totalW = count * size + (count - 1) * HEAT_SLIDER.iconGap;
+      const startX = -totalW / 2 + size / 2;
+      for (let i = 0; i < count; i++) {
+        const sp = new Sprite(tex);
+        sp.anchor.set(0.5);
+        sp.width = size;
+        sp.height = size;
+        sp.position.set(startX + i * (size + HEAT_SLIDER.iconGap), 0);
+        group.addChild(sp);
+      }
+    }
   }
 
-  _drawHeatTrack(level) {
+  // X-coords for the three snap targets (levels 1, 2, 3). Indexed
+  // 0..2; callers map level → level - 1.
+  _heatStepXs() {
+    const x0 = HEAT_SLIDER.cx - HEAT_SLIDER.trackW / 2;
+    return HEAT_SLIDER.positions.map((f) => x0 + f * HEAT_SLIDER.trackW);
+  }
+
+  // Track painter — accepts a 0..1 fraction so drag handlers and
+  // animation tweens can paint intermediate fills without going
+  // through the level → fraction lookup.
+  _drawHeatTrack(fraction) {
+    const f = Math.max(0, Math.min(1, fraction ?? 0));
     const g = this.heatTrackBg;
     const x0 = HEAT_SLIDER.cx - HEAT_SLIDER.trackW / 2;
     const y = HEAT_SLIDER.cy - HEAT_SLIDER.trackH / 2;
@@ -595,49 +704,91 @@ export class CookingScene {
       .roundRect(x0, y, HEAT_SLIDER.trackW, HEAT_SLIDER.trackH, 20)
       .fill({ color: COLORS.trackFill, alpha: 0.52 })
       .stroke({ color: COLORS.trackStroke, width: 1, alpha: 0.52 });
-    if (level > 0) {
-      const fillW =
-        (level / (HEAT_SLIDER.steps - 1)) * HEAT_SLIDER.trackW;
-      g.roundRect(x0, y, fillW, HEAT_SLIDER.trackH, 20).fill(
+    if (f > 0) {
+      g.roundRect(x0, y, HEAT_SLIDER.trackW * f, HEAT_SLIDER.trackH, 20).fill(
         COLORS.flameOrange
       );
     }
+    this._currentFillFraction = f;
   }
 
-  _makeFlame(w = 20, h = 28) {
-    const g = new Graphics();
-    g.moveTo(0, -h / 2);
-    g.bezierCurveTo(w * 0.55, -h * 0.25, w * 0.5, h * 0.3, 0, h / 2);
-    g.bezierCurveTo(-w * 0.5, h * 0.3, -w * 0.55, -h * 0.25, 0, -h / 2);
-    g.fill(COLORS.flameOrange);
-    return g;
-  }
-
+  // Settled-state painter (knob at snap, fill at level fraction). Used
+  // by store-subscribers + initial scene mount. Skipped while a slider
+  // drag is in flight — the drag handler owns visuals during that time.
   _updateHeatSliderVisual() {
+    if (this._sliderDragging) return;
     const level = cookingStore.getState().currentHeatLevel ?? 0;
-    // Crackle on each visible level change. _lastVisualHeatLevel starts
-    // null so the first paint after entering the scene doesn't fire a
-    // spurious crackle. fireAdjust is internally throttled, so even the
-    // live-drag path firing every frame can't queue up a wall of bursts.
     if (
       this._lastVisualHeatLevel != null &&
       level !== this._lastVisualHeatLevel
     ) {
-      fireAdjust(level / (HEAT_SLIDER.steps - 1));
+      fireAdjust(level / 3);
     }
     this._lastVisualHeatLevel = level;
-    const xs = this._heatStepXs();
-    const idx = Math.max(0, Math.min(HEAT_SLIDER.steps - 1, level));
-    this.heatKnob.position.x = xs[idx];
-    this._drawHeatTrack(level);
+    this._animateHeatVisualsToLevel(level);
   }
 
+  // Tween knob position + fill width to the level's snap state. Cancels
+  // any prior in-flight tween so the latest target wins. ease-out cubic
+  // matches the spec's "150ms ease-out" feel without an extra dep.
+  _animateHeatVisualsToLevel(level) {
+    const xs = this._heatStepXs();
+    const x0 = HEAT_SLIDER.cx - HEAT_SLIDER.trackW / 2;
+    const targetX = level >= 1 ? xs[level - 1] : x0;
+    const targetFraction = HEAT_SLIDER.fillFraction[level] ?? 0;
+    const startX = this.heatKnob.position.x;
+    const startFraction = this._currentFillFraction ?? 0;
+    const duration = 180;
+    const tweenId = ++this._heatTweenId;
+    const start = performance.now();
+    const step = () => {
+      if (this._heatTweenId !== tweenId) return; // newer tween took over
+      const t = Math.min(1, (performance.now() - start) / duration);
+      const e = 1 - Math.pow(1 - t, 3);
+      this.heatKnob.position.x = startX + (targetX - startX) * e;
+      this._drawHeatTrack(startFraction + (targetFraction - startFraction) * e);
+      if (t < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+
+  // Live-paint the knob + track at an arbitrary cursor x. Skips the
+  // settled visual so the knob can move smoothly between snap targets
+  // during the drag. Crackles once per snap-boundary crossing — the
+  // drag reads "Set heat to N" sounds without committing N to the store.
+  _renderSliderDragAt(x) {
+    if (x == null) return;
+    const x0 = HEAT_SLIDER.cx - HEAT_SLIDER.trackW / 2;
+    const x1 = HEAT_SLIDER.cx + HEAT_SLIDER.trackW / 2;
+    const clampedX = Math.max(x0, Math.min(x1, x));
+    this.heatKnob.position.x = clampedX;
+    const fraction = (clampedX - x0) / HEAT_SLIDER.trackW;
+    this._drawHeatTrack(fraction);
+    const level = this._heatLevelFromX(clampedX);
+    if (level !== this._sliderDragLevel) {
+      this._sliderDragLevel = level;
+      fireAdjust(level / 3);
+    }
+  }
+
+  // Returns the closest of the three discrete snap levels (1, 2, 3)
+  // to the given x. Used both during drag (to fire crackle on
+  // boundary crossings) and on release (to commit the snap).
   _heatLevelFromX(x) {
     const x0 = HEAT_SLIDER.cx - HEAT_SLIDER.trackW / 2;
     const x1 = HEAT_SLIDER.cx + HEAT_SLIDER.trackW / 2;
     const clamped = Math.max(x0, Math.min(x1, x));
     const t = (clamped - x0) / (x1 - x0);
-    return Math.round(t * (HEAT_SLIDER.steps - 1));
+    let bestLevel = 1;
+    let bestDist = Infinity;
+    for (let i = 0; i < HEAT_SLIDER.positions.length; i++) {
+      const d = Math.abs(t - HEAT_SLIDER.positions[i]);
+      if (d < bestDist) {
+        bestDist = d;
+        bestLevel = i + 1;
+      }
+    }
+    return bestLevel;
   }
 
   // ---------- recipe-log right panel ----------
@@ -981,18 +1132,45 @@ export class CookingScene {
           this._panActive = over;
           this.panGlow.visible = over;
         }
-        // Hand auto-drops on pan entry; mouse keeps explicit release.
-        if (this.grabbed.source === "hand" && over) {
-          const { tile, ghost } = this.grabbed;
-          this.grabbed = null;
-          this._panActive = false;
-          this.panGlow.visible = false;
-          this._dropIntoPan(tile, ghost);
+        // Hand-grab gets a "preview window" so the player can hover
+        // over the pan without committing. Continuous-hover-on-pan for
+        // PAN_COMMIT_MS = drop into pot (logged as recipe). Continuous-
+        // hover-outside-pan for PAN_CANCEL_MS = snap back to source
+        // (no log entry). Either timer resets when the cursor crosses
+        // the boundary, so passing-through doesn't trigger anything.
+        if (this.grabbed.source === "hand") {
+          const now = performance.now();
+          const PAN_COMMIT_MS = 500;
+          const PAN_CANCEL_MS = 800;
+          if (over) {
+            this._panOffSince = null;
+            if (this._panOverSince == null) this._panOverSince = now;
+            if (now - this._panOverSince >= PAN_COMMIT_MS) {
+              const { tile, ghost } = this.grabbed;
+              this.grabbed = null;
+              this._panOverSince = null;
+              this._panOffSince = null;
+              this._panActive = false;
+              this.panGlow.visible = false;
+              this._attemptDropIntoPan(tile, ghost);
+            }
+          } else {
+            this._panOverSince = null;
+            if (this._panOffSince == null) this._panOffSince = now;
+            if (now - this._panOffSince >= PAN_CANCEL_MS) {
+              const { tile, ghost } = this.grabbed;
+              this.grabbed = null;
+              this._panOverSince = null;
+              this._panOffSince = null;
+              this._snapGhostBack(tile, ghost);
+            }
+          }
         }
       } else if (this.grabbed.type === "slider") {
-        const level = this._heatLevelFromX(p.x);
-        cookingStore.setHeatLevel(level);
-        this._updateHeatSliderVisual();
+        // Knob follows the cursor freely during the drag — no snapping
+        // until the player releases. Store updates only on release so
+        // subscribers don't see intermediate raw values.
+        this._renderSliderDragAt(p.x);
       }
       return;
     }
@@ -1026,17 +1204,19 @@ export class CookingScene {
 
     if (this.buttons.pointerDown({ x: p.x, y: p.y, source })) return;
 
-    // Heat slider intent: pinch (or mouse). Pinch is the precision
-    // gesture so it maps naturally to a continuous slider.
+    // Heat slider intent: pinch (or mouse). _inHeatRegion is a
+    // generous box covering both the track and the flame-icon row
+    // above it, so clicking directly on a flame label starts the
+    // slider too — release will snap to that flame's level.
     const sliderGesture = gestureType === "mouse" || gestureType === "pinch";
     if (
       sliderGesture &&
-      (this._inHeatKnob(p.x, p.y) || this._inHeatTrack(p.x, p.y))
+      (this._inHeatKnob(p.x, p.y) || this._inHeatRegion(p.x, p.y))
     ) {
       this.grabbed = { type: "slider" };
-      const level = this._heatLevelFromX(p.x);
-      cookingStore.setHeatLevel(level);
-      this._updateHeatSliderVisual();
+      this._sliderDragging = true;
+      this._sliderDragLevel = null;
+      this._renderSliderDragAt(p.x);
       return;
     }
 
@@ -1064,20 +1244,20 @@ export class CookingScene {
       if (cancelled || p.x == null || !this._overPan(p.x, p.y)) {
         this._snapGhostBack(tile, ghost);
       } else {
-        this._dropIntoPan(tile, ghost);
+        this._attemptDropIntoPan(tile, ghost);
       }
       return;
     }
 
     if (g.type === "slider") {
-      // Snap to the nearest level + log a recipe entry once.
-      let level = cookingStore.getState().currentHeatLevel ?? 0;
-      if (p.x != null) {
-        level = this._heatLevelFromX(p.x);
-        cookingStore.setHeatLevel(level);
-      }
-      this._updateHeatSliderVisual();
-      // Avoid logging a no-op (e.g. tap that didn't move the level)
+      // End of the freeform drag: snap to the closest of 1/2/3 and
+      // tween there. Log only on commit (debounced) so a swift pass-
+      // through doesn't generate a wall of recipe entries.
+      this._sliderDragging = false;
+      const fallbackLevel = cookingStore.getState().currentHeatLevel || 1;
+      const level = p.x != null ? this._heatLevelFromX(p.x) : fallbackLevel;
+      cookingStore.setHeatLevel(level);
+      this._animateHeatVisualsToLevel(level);
       const log = cookingStore.getState().recipeLog;
       const lastHeat = [...log].reverse().find((e) => e.type === "heat");
       if (!lastHeat || lastHeat.value !== level) {
@@ -1114,6 +1294,10 @@ export class CookingScene {
 
   _grabIngredient(tile, designX, designY, source = "mouse") {
     itemPickup();
+    // Reset the preview-window accumulators so each new grab gets a
+    // clean dwell timer regardless of where the cursor was before.
+    this._panOverSince = null;
+    this._panOffSince = null;
     const ghost = new Container();
     const tex = tile.sprite.texture;
     const sp = new Sprite(tex);
@@ -1129,6 +1313,74 @@ export class CookingScene {
     ghost.position.set(designX, designY);
     this.dragLayer.addChild(ghost);
     this.grabbed = { type: "ingredient", tile, ghost, source };
+  }
+
+  // ---------- validation: tofu present + fire on ----------
+
+  // Gate the drop on the fire being on. If the heat slider is at 0,
+  // snap the ingredient back to its panel slot and pop the
+  // "Remember to turn on the fire!" toast. The recipe is NOT logged
+  // (we never call _dropIntoPan, which is what calls addToPot), so
+  // the smart recipe card stays clean.
+  _attemptDropIntoPan(tile, ghost) {
+    const heat = cookingStore.getState().currentHeatLevel ?? 0;
+    if (heat <= 0) {
+      showFireOffToast();
+      this._snapGhostBack(tile, ghost);
+      return;
+    }
+    this._dropIntoPan(tile, ghost);
+  }
+
+  _potHasTofu() {
+    const potOrder = cookingStore.getState().potOrder ?? [];
+    for (const item of potOrder) {
+      const data = INGREDIENT_DATA.find((d) => d.id === item.id);
+      if (data?.category === "tofu") return true;
+    }
+    return false;
+  }
+
+  _showMissingTofuModal() {
+    if (this._missingTofuModal) return;
+    this._missingTofuModal = mountMissingTofuModal({
+      onGoBack: () => {
+        this._missingTofuModal = null;
+        this._resetCookingProgress();
+      },
+    });
+  }
+
+  // Wipes everything the player did in this cooking session — pot
+  // contents, recipe log, heat level, dish-image fields — without
+  // touching their ingredient/cookware selection upstream. Called
+  // when the player presses "Go Back" on the missing-tofu modal.
+  _resetCookingProgress() {
+    // Drop any visible items in the pan (mirrors the per-frame loop
+    // we use elsewhere — destroy children so they free their texture
+    // refs cleanly).
+    while (this.panItemsLayer.children.length) {
+      const child = this.panItemsLayer.children[0];
+      this.panItemsLayer.removeChild(child);
+      child.destroy({ children: true });
+    }
+    // If the player was mid-grab when they pressed Cooked!, drop the
+    // ghost so we don't strand it.
+    if (this.grabbed?.ghost) {
+      this.grabbed.ghost.parent?.removeChild(this.grabbed.ghost);
+      this.grabbed.ghost.destroy({ children: true });
+    }
+    this.grabbed = null;
+    this._panActive = false;
+    this.panGlow.visible = false;
+    this._panOverSince = null;
+    this._panOffSince = null;
+
+    // Clear the relevant store fields. The recipe-card panel + heat
+    // slider are subscription-driven, so calling notify via the store
+    // method automatically refreshes their visuals.
+    cookingStore.clearCookingProgress();
+    this._updateHeatSliderVisual();
   }
 
   _snapGhostBack(tile, ghost) {
@@ -1163,15 +1415,16 @@ export class CookingScene {
 
     // Phyllotaxis ("sunflower") placement: each new drop lands at a
     // golden-angle step from the previous so items fan out evenly
-    // around the burner instead of stacking. A small random jitter
-    // keeps the look organic rather than computer-pattern.
+    // around the burner instead of stacking. SPACING ≥ item edge so
+    // adjacent slots don't visibly overlap; jitter is small (±2 px)
+    // so the layout stays readable without looking computer-perfect.
     const i = this.panItemsLayer.children.length;
     const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5)); // ≈ 137.5°
-    const SPACING = 38; // tuned so the first ~12 items stay inside the pan
+    const SPACING = 50;
     const radius = i === 0 ? 0 : Math.sqrt(i) * SPACING;
     const angle = i * GOLDEN_ANGLE;
-    const jitterX = (Math.random() - 0.5) * 8;
-    const jitterY = (Math.random() - 0.5) * 6;
+    const jitterX = (Math.random() - 0.5) * 4;
+    const jitterY = (Math.random() - 0.5) * 3;
     const offX = Math.cos(angle) * radius + jitterX;
     // Vertical squash gives the burner a hint of perspective (the
     // pan reads as an oval, not a flat disc).

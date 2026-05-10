@@ -8,6 +8,7 @@
 
 import dishUrl from "../assets/illustrations/MapoTofuillustration.png";
 import { traditionalRecipe } from "../data/traditionalRecipe.js";
+import { cookingStore } from "../cooking/cookingStore.js";
 
 const DESIGN_W = 1920;
 const DESIGN_H = 1080;
@@ -40,12 +41,21 @@ export function mountTraditionalRecipePanel() {
     .join("");
 
   panel.innerHTML = `
+    <button class="trp-close" type="button" aria-label="Close recipe" data-hand-dwellable>
+      <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+        <path d="M5 5 L19 19 M19 5 L5 19" stroke="#2a2a2a" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+      </svg>
+    </button>
     <img class="trp-illustration" src="${dishUrl}" alt="" />
     <h2 class="trp-title">${escapeHtml(traditionalRecipe.title)}</h2>
     <div class="trp-card">
       <ul class="trp-ingredients">${ingredientsHtml}</ul>
     </div>
   `;
+
+  panel.querySelector(".trp-close")?.addEventListener("click", () => {
+    cookingStore.setTraditionalRecipeOpen(false);
+  });
 
   stage.appendChild(panel);
   overlay.appendChild(stage);

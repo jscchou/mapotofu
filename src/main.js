@@ -10,11 +10,13 @@ import { HandTracker } from "./tracking/HandTracker.js";
 import { OneEuroFilter } from "./tracking/OneEuroFilter.js";
 import { GestureDetector } from "./tracking/GestureDetector.js";
 import { PointerManager } from "./input/PointerManager.js";
+import { DomHandDwell } from "./input/DomHandDwell.js";
 import { DebugOverlay } from "./ui/DebugOverlay.js";
 import { mountAddToCollectionModal } from "./ui/AddToCollectionModal.js";
 import { mountTraditionalRecipePanel } from "./ui/TraditionalRecipePanel.js";
 import { mountMuteButton } from "./ui/MuteButton.js";
 import { mountAudioUnlockBanner } from "./ui/AudioUnlockBanner.js";
+import { mountHandCursorOverlay } from "./ui/HandCursorOverlay.js";
 import {
   installUserGestureUnlock,
   sceneTransition,
@@ -188,6 +190,15 @@ async function bootMainApp() {
   // for that one click/key/touch and dismisses itself the moment
   // the AudioContext flips to "running".
   mountAudioUnlockBanner();
+
+  // Hand-hover-to-click for any DOM element marked with
+  // [data-hand-dwellable]. Modal X/Add buttons and the recipe
+  // panel close button opt in via that attribute.
+  const domHandDwell = new DomHandDwell();
+  // DOM cursor overlay: visible at z-index 9999 so the player can
+  // see their hand position + dwell progress over modals (the Pixi
+  // cursor lives inside the canvas and is occluded by them).
+  const handCursor = mountHandCursorOverlay();
 
   // Best-effort: warm up the fonts Pixi will need so first paint isn't fallback.
   await Promise.all([
@@ -546,7 +557,27 @@ async function bootMainApp() {
       source: pm.source,
     });
 
-    pointer.setDwell(currentScene?.getPointerDwell?.() ?? 0);
+    // DOM hover-to-click for modal close buttons / recipe-panel X.
+    // Runs after scene pointerMove so the scene's dwell state for the
+    // same frame is already current; we report whichever progress is
+    // higher to the cursor's dwell ring.
+    domHandDwell.tick(pm);
+
+    const sceneDwell = currentScene?.getPointerDwell?.() ?? 0;
+    const domDwell = domHandDwell.getDwellProgress();
+    const totalDwell = Math.max(sceneDwell, domDwell);
+    pointer.setDwell(totalDwell);
+
+    // DOM cursor mirror: same position as the Pixi cursor but at
+    // z-index 9999 so it's visible above modals. Dwell progress is
+    // the max of the in-Pixi dwell and the DOM dwell so the user
+    // sees the wind-up regardless of which one is firing.
+    handCursor.update({
+      source: pm.source,
+      x: pm.x,
+      y: pm.y,
+      dwell: totalDwell,
+    });
 
     // Per-frame scene update (timer, animations, etc.)
     currentScene?.update?.(now);

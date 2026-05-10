@@ -6,6 +6,16 @@ function cap(s) {
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : "";
 }
 
+// 1=small, 2=medium, 3=large. Falls back to the raw number for any
+// out-of-range level so an unexpected value still reads sanely in the
+// recipe log instead of becoming "undefined".
+export function heatLevelName(level) {
+  if (level === 1) return "small";
+  if (level === 2) return "medium";
+  if (level === 3) return "large";
+  return String(level);
+}
+
 export function buildIngredientLines(state) {
   return (state.potOrder ?? []).map((p, i) => `${i + 1}. ${p.name}`);
 }
@@ -22,7 +32,7 @@ export function buildProcessLines(state) {
       lines.push(firstIngredient ? `Started with ${name}` : `Added ${name}`);
       firstIngredient = false;
     } else if (entry.type === "heat") {
-      lines.push(`Set heat to ${entry.value}`);
+      lines.push(`Set heat to ${heatLevelName(entry.value)}`);
     }
   }
   return lines;

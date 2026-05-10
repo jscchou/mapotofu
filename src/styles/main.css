@@ -548,10 +548,10 @@ body.gallery-page {
 
 .atc-close {
   position: absolute;
-  top: 32px;
-  left: 32px;
-  width: 46px;
-  height: 46px;
+  top: 24px;
+  left: 24px;
+  width: 58px;
+  height: 58px;
   border-radius: 50%;
   background: #ffdb00;
   border: none;
@@ -832,6 +832,7 @@ body.gallery-page {
 }
 
 .trp-panel {
+  position: relative;
   width: 480px;
   height: 920px;
   background: rgba(255, 244, 183, 0.8);
@@ -847,6 +848,33 @@ body.gallery-page {
   padding: 56px 20px 32px;
   font-family: "Intel One Mono", "JetBrains Mono", ui-monospace, monospace;
   box-sizing: border-box;
+}
+
+/* Yellow circle close button — opts into pointer-events so the
+   panel-overlay's `pointer-events: none` doesn't swallow clicks
+   on this one element. Mouse clicks fire it directly; hand-dwell
+   fires it via DomHandDwell because we mark it data-hand-dwellable. */
+.trp-close {
+  position: absolute;
+  top: 18px;
+  left: 18px;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: #ffdb00;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  pointer-events: auto;
+  transition: background 120ms ease, transform 120ms ease;
+}
+
+.trp-close:hover {
+  background: #ffe633;
+  transform: scale(1.05);
 }
 
 .trp-illustration {
@@ -970,6 +998,188 @@ body.gallery-page {
 }
 
 .audio-unlock-banner-fade {
+  opacity: 0;
+  transform: translate(-50%, -8px);
+}
+
+/* ============================================================
+   Hand cursor overlay (DOM-side mirror of the Pixi cursor) +
+   hand-hover highlight class for any [data-hand-dwellable]
+   element. Z-index sits above modals so the player can always
+   see where their hand is and how much of the dwell has filled.
+   ============================================================ */
+
+.hand-cursor {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 40px;
+  height: 40px;
+  pointer-events: none;
+  z-index: 9999;
+  opacity: 0;
+  transition: opacity 120ms ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.hand-cursor.hand-cursor-visible {
+  opacity: 1;
+}
+
+.hand-cursor-ring {
+  position: absolute;
+  inset: 0;
+}
+
+.hand-cursor-track {
+  fill: rgba(217, 106, 58, 0.18);
+  stroke: rgba(217, 106, 58, 0.35);
+  stroke-width: 2;
+}
+
+.hand-cursor-fill {
+  fill: none;
+  stroke: #d96a3a;
+  stroke-width: 3;
+  stroke-linecap: round;
+  /* dashoffset / dasharray set in JS for the 0..1 sweep */
+  transition: stroke-dashoffset 60ms linear;
+}
+
+.hand-cursor-dot {
+  position: relative;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 0 0 2px rgba(217, 106, 58, 0.65);
+}
+
+/* When DomHandDwell is tracking an element, mark it so the player
+   gets a clear visual cue that the dwell has them. The element's
+   transform must respect its existing positioning; we avoid the
+   transform property so we don't fight with elements that already
+   set their own (e.g., the modal panel uses translate). */
+[data-hand-dwellable].hand-hover {
+  filter: brightness(1.06);
+  outline: 3px solid rgba(217, 106, 58, 0.55);
+  outline-offset: 4px;
+}
+
+/* ============================================================
+   Missing-tofu validation modal — blocker. Shown when the player
+   presses "Cooked!" without any tofu in the pot. Centered card
+   with a single yellow "Go Back" button that resets the scene.
+   ============================================================ */
+
+.missing-tofu-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 820; /* above the audio banner (700) and recipe panel (150) */
+  font-family: "Intel One Mono", "JetBrains Mono", ui-monospace, monospace;
+}
+
+.missing-tofu-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.missing-tofu-modal {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform-origin: center center;
+  transform: translate(-50%, -50%) scale(1);
+  width: 520px;
+  background: #fffcea;
+  border: 2px solid #ffd900;
+  border-radius: 14px;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.12);
+  padding: 36px 40px 32px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  animation: missing-tofu-pop 280ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@keyframes missing-tofu-pop {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+.missing-tofu-icon {
+  font-size: 48px;
+  line-height: 1;
+  margin-bottom: 12px;
+}
+
+.missing-tofu-title {
+  margin: 0 0 22px;
+  font: 600 28px/1.2 "Intel One Mono", ui-monospace, monospace;
+  color: #980007;
+  letter-spacing: -0.03em;
+}
+
+.missing-tofu-btn {
+  font: 700 20px/1 "Lato", system-ui, sans-serif;
+  padding: 14px 36px;
+  border-radius: 999px;
+  border: none;
+  cursor: pointer;
+  background: #ffdb00;
+  color: #4e2700;
+  box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.08);
+  transition: background 120ms ease, transform 120ms ease;
+}
+
+.missing-tofu-btn:hover {
+  background: #ffe633;
+  transform: scale(1.04);
+}
+
+/* ============================================================
+   Fire-off toast — lighter, non-blocking. Auto-dismisses after
+   2.5s. Top-center pill, same shape language as the audio
+   unlock banner so the two reads as a coherent toast family.
+   ============================================================ */
+
+.fire-off-toast {
+  position: fixed;
+  top: 64px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 22px;
+  border-radius: 999px;
+  background: rgba(255, 252, 234, 0.96);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1.5px solid #ffd900;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.1);
+  font: 600 16px/1.3 "Intel One Mono", ui-monospace, monospace;
+  color: #980007;
+  pointer-events: none;
+  z-index: 720; /* above mute btn (600) + audio banner (700), below modal (820) */
+  transition: opacity 240ms ease, transform 240ms ease;
+}
+
+.fire-off-toast-icon {
+  font-size: 18px;
+}
+
+.fire-off-toast-fade {
   opacity: 0;
   transform: translate(-50%, -8px);
 }

@@ -26,7 +26,7 @@ export function mountAddToCollectionModal({ onClose, onAdded } = {}) {
   root.innerHTML = `
     <div class="atc-backdrop" data-role="backdrop"></div>
     <div class="atc-modal" role="dialog" aria-modal="true" aria-label="Add to collection">
-      <button class="atc-close" type="button" data-role="close" aria-label="Close">
+      <button class="atc-close" type="button" data-role="close" aria-label="Close" data-hand-dwellable>
         <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">
           <path d="M5 5 L19 19 M19 5 L5 19" stroke="black" stroke-width="2.5" stroke-linecap="round" fill="none"/>
         </svg>
@@ -60,7 +60,7 @@ export function mountAddToCollectionModal({ onClose, onAdded } = {}) {
         />
       </div>
 
-      <button class="atc-add" type="button" disabled data-role="add">Add</button>
+      <button class="atc-add" type="button" disabled data-role="add" data-hand-dwellable>Add</button>
     </div>
   `;
   document.body.appendChild(root);

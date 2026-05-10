@@ -98,6 +98,17 @@ const BASKET = {
   radius: 344, // matches the full 688px diameter for drop hit-testing
 };
 
+// Top-right "Traditional Recipe" pill — sized + positioned to match
+// CookwareScene and CookingScene so the button reads identically across
+// the three eligible scenes.
+const RECIPE_BTN = {
+  w: 349,
+  h: 75,
+  r: 40,
+  x: CANVAS.w - 35 - 349,
+  y: 35,
+};
+
 // Mini-tile inside the basket when an ingredient is dropped. Bumped from
 // 60 → 80 so dropped items read at a similar weight to the basket art
 // and don't feel "tiny" against the 688px basket bounding box.
@@ -224,6 +235,14 @@ export class IngredientScene {
         return tile && tile.hasAsset ? tile : null;
       },
       onPick: (tile, x, y) => this._grab(tile, x, y, "hand"),
+    });
+
+    // Reverse-drag picker: hover for 1s on an existing basket item to
+    // lift it back out of the basket. Drag outside the basket boundary
+    // and the item snaps back to its source tile slot.
+    this.basketPicker = new HandHoverPicker({
+      getHoveredTarget: (x, y) => this._basketItemAt(x, y),
+      onPick: (entry, x, y) => this._grabBasketItem(entry, x, y, "hand"),
     });
   }
 
@@ -605,11 +624,20 @@ export class IngredientScene {
     this.titleText.anchor.set(0, 0.5);
     this.titleText.position.set(140, 60 + 22);
 
-    // Recipe button (icon + text)
+    // Recipe pill (top-right): yellow rounded-rect with book icon +
+    // "Traditional Recipe" label. Same RECIPE_BTN dimensions as
+    // CookwareScene / CookingScene so the three scenes feel identical.
     this.recipeBtn = new Container();
     this.recipeBtn.label = "RecipeBtn";
-    this.recipeBtn.position.set(1564, 50);
-    this._drawRecipeIcon();
+    this.recipeBtn.position.set(
+      RECIPE_BTN.x + RECIPE_BTN.w / 2,
+      RECIPE_BTN.y + RECIPE_BTN.h / 2
+    );
+    this.recipeBtnBg = new Graphics();
+    this._drawRecipeBtn();
+
+    const icon = this._makeRecipeIcon();
+    icon.position.set(-RECIPE_BTN.w / 2 + 38, 0);
 
     this.recipeText = new Text({
       text: "Traditional Recipe",
@@ -622,43 +650,45 @@ export class IngredientScene {
         fill: COLORS.brown,
       }),
     });
-    // Spec: text at canvas (1616, 58). Container is at (1564, 50), so text
-    // sits at relative (52, 8).
-    this.recipeText.position.set(52, 8);
-    this.recipeBtn.addChild(this.recipeText);
+    this.recipeText.anchor.set(0, 0.5);
+    this.recipeText.position.set(-RECIPE_BTN.w / 2 + 70, 0);
 
+    this.recipeBtn.addChild(this.recipeBtnBg, icon, this.recipeText);
     this.uiLayer.addChild(this.backBtn, this.titleText, this.recipeBtn);
   }
 
-  _drawRecipeIcon() {
-    const icon = new Container();
+  _makeRecipeIcon() {
+    // Compact book glyph — anchored at (0, 0) so the parent Container
+    // can position it via icon.position.set().
+    const c = new Container();
     const g = new Graphics();
-    // Open book: two rounded "pages" with a center spine.
-    const pageW = 17;
-    const pageH = 36;
-    // Left page
-    g.roundRect(0, 8, pageW, pageH, 3)
+    g.roundRect(-18, -22, 17, 44, 3)
       .fill(COLORS.bookCream)
       .stroke({ color: COLORS.brown, width: 2 });
-    // Right page
-    g.roundRect(pageW + 2, 8, pageW, pageH, 3)
+    g.roundRect(1, -22, 17, 44, 3)
       .fill(COLORS.bookCream)
       .stroke({ color: COLORS.brown, width: 2 });
-    // Center spine line
-    g.moveTo(pageW + 1, 10)
-      .lineTo(pageW + 1, 42)
+    g.moveTo(0, -20)
+      .lineTo(0, 20)
       .stroke({ color: COLORS.brown, width: 2 });
-    // Bookmark sticking up
-    g.roundRect(pageW - 4, 0, 9, 14, 1)
-      .fill(COLORS.bookCream)
-      .stroke({ color: COLORS.brown, width: 2 });
-    // Subtle dots suggesting recipe lines
-    for (let i = 0; i < 3; i++) {
-      g.circle(7, 18 + i * 7, 1.2).fill(COLORS.brown);
-      g.circle(pageW + 9, 18 + i * 7, 1.2).fill(COLORS.brown);
+    for (let i = 0; i < 4; i++) {
+      g.moveTo(-15, -16 + i * 8)
+        .lineTo(-3, -16 + i * 8)
+        .stroke({ color: COLORS.brown, width: 1 });
+      g.moveTo(3, -16 + i * 8)
+        .lineTo(15, -16 + i * 8)
+        .stroke({ color: COLORS.brown, width: 1 });
     }
-    icon.addChild(g);
-    this.recipeBtn.addChild(icon);
+    c.addChild(g);
+    return c;
+  }
+
+  _drawRecipeBtn() {
+    const { w, h, r } = RECIPE_BTN;
+    this.recipeBtnBg
+      .clear()
+      .roundRect(-w / 2, -h / 2, w, h, r)
+      .fill(this._recipeHovered ? COLORS.yellowBtnHover : COLORS.yellowBtn);
   }
 
   // ---------- Build: instruction + continue ----------
@@ -783,7 +813,12 @@ export class IngredientScene {
         const now = performance.now();
         this._handGoneSince = this._handGoneSince ?? now;
         if (now - this._handGoneSince > 600) {
-          this._snapGhostBack(this.grabbed.tile, this.grabbed.ghost);
+          // Cancel cleanly depending on grab kind.
+          if (this.grabbed.kind === "basket") {
+            this._cancelBasketGrab(this.grabbed);
+          } else {
+            this._snapGhostBack(this.grabbed.tile, this.grabbed.ghost);
+          }
           this.grabbed = null;
           this._handGoneSince = null;
           this._basketActive = false;
@@ -799,6 +834,19 @@ export class IngredientScene {
         this._basketActive = over;
         this.basketGlow.visible = over;
       }
+      if (this.grabbed.kind === "basket") {
+        // Reverse drag: hand auto-fires the put-back the moment the
+        // ghost leaves the basket boundary. Mouse waits for an
+        // explicit release (handled in onPointerUp).
+        if (this.grabbed.source === "hand" && !over) {
+          const g = this.grabbed;
+          this.grabbed = null;
+          this._basketActive = false;
+          this.basketGlow.visible = false;
+          this._putBackBasketEntry(g);
+        }
+        return;
+      }
       // Hand-grab auto-drops the moment the ghost reaches the basket.
       // Mouse keeps the explicit click-and-release semantic — there the
       // user actively releases by letting go of the button.
@@ -812,9 +860,10 @@ export class IngredientScene {
       return;
     }
 
-    // Drive hand-hover dwell for every registered button + tile.
+    // Drive hand-hover dwell for every registered button + tile + basket entry.
     this.buttons.pointerMove({ x: p.x, y: p.y, source });
     this.tilePicker.pointerMove({ x: p.x, y: p.y, source });
+    this.basketPicker.pointerMove({ x: p.x, y: p.y, source });
 
     if (p.x == null) {
       this._setBackHovered(false);
@@ -848,6 +897,14 @@ export class IngredientScene {
     // (HandHoverPicker), so we ignore hand presses here entirely.
     if (source !== "mouse") return;
 
+    // Reverse drag: a click on an existing basket entry lifts it out
+    // first — that wins over the underlying basket area.
+    const basketEntry = this._basketItemAt(p.x, p.y);
+    if (basketEntry) {
+      this._grabBasketItem(basketEntry, p.x, p.y, "mouse");
+      return;
+    }
+
     const tile = this._tileAt(p.x, p.y);
     if (!tile || !tile.hasAsset) return;
     this._grab(tile, p.x, p.y, "mouse");
@@ -855,12 +912,27 @@ export class IngredientScene {
 
   onPointerUp({ x, y, cancelled }) {
     if (!this.grabbed) return;
-    const { tile, ghost } = this.grabbed;
+    const g = this.grabbed;
     this.grabbed = null;
     this._basketActive = false;
     this.basketGlow.visible = false;
 
     const p = this._toDesign(x, y);
+
+    // Reverse drag (basket → outside): release outside basket = put
+    // back to source tile; release inside basket = cancel (no state
+    // change, the entry just settles back into place).
+    if (g.kind === "basket") {
+      if (cancelled || p.x == null || !this._overBasket(p.x, p.y)) {
+        this._putBackBasketEntry(g);
+      } else {
+        this._cancelBasketGrab(g);
+      }
+      return;
+    }
+
+    // Forward drag (tile → basket): existing behavior unchanged.
+    const { tile, ghost } = g;
     if (cancelled || p.x == null || !this._overBasket(p.x, p.y)) {
       this._snapGhostBack(tile, ghost);
       return;
@@ -885,7 +957,8 @@ export class IngredientScene {
   getPointerDwell() {
     return Math.max(
       this.buttons?.getDwellProgress() ?? 0,
-      this.tilePicker?.getDwellProgress() ?? 0
+      this.tilePicker?.getDwellProgress() ?? 0,
+      this.basketPicker?.getDwellProgress() ?? 0
     );
   }
 
@@ -935,7 +1008,64 @@ export class IngredientScene {
     ghost.position.set(designX, designY);
     this.dragLayer.addChild(ghost);
 
-    this.grabbed = { tile, ghost, source };
+    this.grabbed = { tile, ghost, source, kind: "tile" };
+  }
+
+  // Lift an existing basket entry back into a follow-the-cursor ghost.
+  // Mirrors _grab's visuals so a basket pickup feels like a tile pickup.
+  // The basket sprite is hidden (not destroyed) for the duration of
+  // the drag — if the player drops back inside the basket, we just
+  // restore visibility instead of re-running the basket-add animation.
+  _grabBasketItem(entry, designX, designY, source = "mouse") {
+    const tile = this.tiles.get(entry.id);
+    if (!tile) return;
+    itemPickup();
+
+    entry.sprite.visible = false;
+
+    const ghost = new Container();
+    ghost.label = `Ghost:${tile.id}:basket`;
+
+    const shadow = new Graphics()
+      .ellipse(0, 8, 36, 8)
+      .fill({ color: 0x000000, alpha: 0.25 });
+    shadow.filters = [new BlurFilter({ strength: 6 })];
+
+    const tex = tile.sprite.texture;
+    const sp = new Sprite(tex);
+    sp.anchor.set(0.5);
+    sp.width = tile.sprite.width;
+    sp.height = tile.sprite.height;
+
+    ghost.addChild(shadow, sp);
+    ghost.scale.set(1.1);
+    ghost.position.set(designX, designY);
+    this.dragLayer.addChild(ghost);
+
+    this.grabbed = { tile, ghost, source, kind: "basket", entry };
+  }
+
+  // Commit a reverse-drag: remove the basket entry, animate the ghost
+  // back to its source tile slot, and re-enable the tile so the player
+  // can re-pick it. Always called from a non-cancelled state — caller
+  // is responsible for clearing this.grabbed.
+  _putBackBasketEntry(g) {
+    const { tile, ghost, entry } = g;
+    const idx = this.basketItems.indexOf(entry);
+    if (idx >= 0) this.basketItems.splice(idx, 1);
+    entry.sprite.parent?.removeChild(entry.sprite);
+    entry.sprite.destroy({ children: true });
+    this._snapGhostBack(tile, ghost);
+    this._refreshSelectedTiles();
+    this._updateContinueState();
+  }
+
+  // Cancel a reverse-drag: just restore the basket sprite and toss the
+  // ghost. No state mutation — the basket entry stays exactly where it was.
+  _cancelBasketGrab(g) {
+    g.entry.sprite.visible = true;
+    g.ghost.parent?.removeChild(g.ghost);
+    g.ghost.destroy({ children: true });
   }
 
   _snapGhostBack(tile, ghost) {
@@ -967,13 +1097,21 @@ export class IngredientScene {
       }
     }
 
-    // Pile spot inside the basket interior. We use linear-r (not
-    // sqrt-of-uniform) so density biases toward the middle and items
-    // don't get pushed onto the woven rim where they read as small.
-    const angle = Math.random() * Math.PI * 2;
-    const r = Math.random() * BASKET_PILE_RADIUS;
-    const offX = Math.cos(angle) * r;
-    const offY = Math.sin(angle) * r;
+    // Phyllotaxis ("sunflower") placement keyed off the current
+    // basket-item count. Each new drop lands at a fresh ~137.5° step
+    // from the previous, so successive items fan out around the
+    // centre instead of stacking on top of one another. Tiny jitter
+    // keeps the look organic without breaking the spread.
+    const i = this.basketItems.length;
+    const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
+    const SPACING = 44; // √12 * 44 ≈ 152, fits inside BASKET_PILE_RADIUS
+    const radius =
+      i === 0 ? 0 : Math.min(BASKET_PILE_RADIUS, Math.sqrt(i) * SPACING);
+    const angle = i * GOLDEN_ANGLE;
+    const jitterX = (Math.random() - 0.5) * 4;
+    const jitterY = (Math.random() - 0.5) * 4;
+    const offX = Math.cos(angle) * radius + jitterX;
+    const offY = Math.sin(angle) * radius + jitterY;
     const target = {
       x: this.basketContainer.x + offX,
       y: this.basketContainer.y + offY,
@@ -1100,6 +1238,23 @@ export class IngredientScene {
     return Math.hypot(dx, dy) <= BASKET.radius;
   }
 
+  // Which basket entry sits under the (design-coord) cursor, if any.
+  // Used by the reverse-drag picker so a player can grab an ingredient
+  // back out of the basket. Iterates newest-first so an entry placed on
+  // top of an earlier one wins the hit-test.
+  _basketItemAt(x, y) {
+    const r = BASKET_ITEM.size / 2;
+    for (let i = this.basketItems.length - 1; i >= 0; i--) {
+      const entry = this.basketItems[i];
+      // sprite is hidden when in flight — don't grab it again mid-drag.
+      if (!entry.sprite.visible) continue;
+      const cx = this.basketContainer.x + entry.sprite.x;
+      const cy = this.basketContainer.y + entry.sprite.y;
+      if (Math.hypot(x - cx, y - cy) <= r) return entry;
+    }
+    return null;
+  }
+
   _inCircle(x, y, container, radius) {
     const dx = x - container.x;
     const dy = y - container.y;
@@ -1108,8 +1263,12 @@ export class IngredientScene {
 
 
   _inRecipeBtn(x, y) {
-    // Bounding rect ~ 290×44 starting at (1564, 50)
-    return pointInRect(x, y, { x: 1564, y: 50, width: 300, height: 44 });
+    return pointInRect(x, y, {
+      x: RECIPE_BTN.x,
+      y: RECIPE_BTN.y,
+      width: RECIPE_BTN.w,
+      height: RECIPE_BTN.h,
+    });
   }
 
   _inContinueBtn(x, y) {
@@ -1133,6 +1292,7 @@ export class IngredientScene {
   _setRecipeHovered(v) {
     if (v === this._recipeHovered) return;
     this._recipeHovered = v;
+    this._drawRecipeBtn();
   }
   _setContinueHovered(v) {
     if (v === this._continueHovered) return;

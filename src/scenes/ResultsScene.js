@@ -8,6 +8,7 @@ import {
 } from "pixi.js";
 import dishPlaceholderUrl from "../assets/illustrations/MapoTofuillustration.png";
 import { cookingStore } from "../cooking/cookingStore.js";
+import { heatLevelName } from "../cooking/recipeText.js";
 import { HandButtonDwell } from "../input/HandButtonDwell.js";
 import { buttonClick, hoverTick } from "../audio/soundEngine.js";
 
@@ -386,7 +387,7 @@ export class ResultsScene {
       .map((entry) => {
         if (entry.type === "ingredient")
           return `Added ${entry.value?.name ?? "ingredient"}`;
-        if (entry.type === "heat") return `Set heat to ${entry.value}`;
+        if (entry.type === "heat") return `Set heat to ${heatLevelName(entry.value)}`;
         return "";
       })
       .filter(Boolean);

@@ -227,10 +227,6 @@ export class CookingScene {
     this._recipeHovered = false;
     this._lastHoveredTileId = null;
     this._lastVisualHeatLevel = null;
-    // Pan hover/off-pan accumulators for the hand-grab preview window
-    // (replaces the old instant auto-drop-on-entry behaviour).
-    this._panOverSince = null;
-    this._panOffSince = null;
     // Heat slider state. _sliderDragging gates the settled-paint path
     // so it doesn't fight the drag handler over the knob's position.
     // _heatTweenId is bumped each time we kick off a snap animation so
@@ -1132,39 +1128,13 @@ export class CookingScene {
           this._panActive = over;
           this.panGlow.visible = over;
         }
-        // Hand-grab gets a "preview window" so the player can hover
-        // over the pan without committing. Continuous-hover-on-pan for
-        // PAN_COMMIT_MS = drop into pot (logged as recipe). Continuous-
-        // hover-outside-pan for PAN_CANCEL_MS = snap back to source
-        // (no log entry). Either timer resets when the cursor crosses
-        // the boundary, so passing-through doesn't trigger anything.
-        if (this.grabbed.source === "hand") {
-          const now = performance.now();
-          const PAN_COMMIT_MS = 500;
-          const PAN_CANCEL_MS = 800;
-          if (over) {
-            this._panOffSince = null;
-            if (this._panOverSince == null) this._panOverSince = now;
-            if (now - this._panOverSince >= PAN_COMMIT_MS) {
-              const { tile, ghost } = this.grabbed;
-              this.grabbed = null;
-              this._panOverSince = null;
-              this._panOffSince = null;
-              this._panActive = false;
-              this.panGlow.visible = false;
-              this._attemptDropIntoPan(tile, ghost);
-            }
-          } else {
-            this._panOverSince = null;
-            if (this._panOffSince == null) this._panOffSince = now;
-            if (now - this._panOffSince >= PAN_CANCEL_MS) {
-              const { tile, ghost } = this.grabbed;
-              this.grabbed = null;
-              this._panOverSince = null;
-              this._panOffSince = null;
-              this._snapGhostBack(tile, ghost);
-            }
-          }
+        // Hand-grab auto-drops on pan entry; mouse keeps explicit release.
+        if (this.grabbed.source === "hand" && over) {
+          const { tile, ghost } = this.grabbed;
+          this.grabbed = null;
+          this._panActive = false;
+          this.panGlow.visible = false;
+          this._attemptDropIntoPan(tile, ghost);
         }
       } else if (this.grabbed.type === "slider") {
         // Knob follows the cursor freely during the drag — no snapping
@@ -1294,10 +1264,6 @@ export class CookingScene {
 
   _grabIngredient(tile, designX, designY, source = "mouse") {
     itemPickup();
-    // Reset the preview-window accumulators so each new grab gets a
-    // clean dwell timer regardless of where the cursor was before.
-    this._panOverSince = null;
-    this._panOffSince = null;
     const ghost = new Container();
     const tex = tile.sprite.texture;
     const sp = new Sprite(tex);
@@ -1373,14 +1339,40 @@ export class CookingScene {
     this.grabbed = null;
     this._panActive = false;
     this.panGlow.visible = false;
-    this._panOverSince = null;
-    this._panOffSince = null;
 
     // Clear the relevant store fields. The recipe-card panel + heat
     // slider are subscription-driven, so calling notify via the store
     // method automatically refreshes their visuals.
     cookingStore.clearCookingProgress();
     this._updateHeatSliderVisual();
+  }
+
+  // Visual-only cleanup for the Start Over flow. Differs from
+  // _resetCookingProgress in that it doesn't mutate the store —
+  // main.js calls cookingStore.reset() separately to do the full
+  // wipe (which preserves savedDishes + traditionalRecipeOpen).
+  // After this runs the next onEnter() will rebuild tiles, recipe
+  // log, stove + cookware, etc. from the freshly-reset store.
+  _clearLocalState() {
+    while (this.panItemsLayer.children.length) {
+      const child = this.panItemsLayer.children[0];
+      this.panItemsLayer.removeChild(child);
+      child.destroy({ children: true });
+    }
+    if (this.grabbed?.ghost) {
+      this.grabbed.ghost.parent?.removeChild(this.grabbed.ghost);
+      this.grabbed.ghost.destroy({ children: true });
+    }
+    this.grabbed = null;
+    this._panActive = false;
+    this.panGlow.visible = false;
+    this._lastHoveredTileId = null;
+    this._lastVisualHeatLevel = null;
+    this._sliderDragging = false;
+    this._sliderDragLevel = null;
+    this._handGoneSince = null;
+    this.tilePicker?.cancel();
+    this.heatPicker?.cancel();
   }
 
   _snapGhostBack(tile, ghost) {

@@ -60,8 +60,18 @@ export async function mountGalleryPage(rootEl = document.body) {
 
   // Live cross-tab updates: any dish added in another tab pushes through
   // BroadcastChannel; rehydrating from the persisted list keeps ordering
-  // + dedup consistent.
-  galleryStore.subscribe(() => hydrateSavedDishesFromGallery());
+  // + dedup consistent. Keep the unsubscribe handle so we can release
+  // the BroadcastChannel cleanly on tab close.
+  const unsubscribeGallery = galleryStore.subscribe(() => {
+    hydrateSavedDishesFromGallery();
+  });
+  window.addEventListener("beforeunload", () => {
+    unsubscribeGallery?.();
+  });
+
+  // Pulsing "Live" indicator so the player can see at a glance that the
+  // second-screen view is connected and listening for updates.
+  mountLiveIndicator();
 
   const collectionScene = new CollectionScene({
     onBack: () => {
@@ -96,4 +106,66 @@ export async function mountGalleryPage(rootEl = document.body) {
     });
     collectionScene.update?.(performance.now());
   });
+}
+
+// Top-right "Live" pill with a pulsing green dot. Self-contained: the
+// styles + keyframes live in an injected <style> tag so we don't have
+// to touch the global stylesheet for a route-scoped detail.
+function mountLiveIndicator() {
+  if (document.getElementById("gallery-live-style")) return; // hot-reload safety
+  const style = document.createElement("style");
+  style.id = "gallery-live-style";
+  style.textContent = `
+    .gallery-live-indicator {
+      position: fixed;
+      top: 14px;
+      right: 14px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px 6px 12px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.94);
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+      border: 1px solid rgba(0, 0, 0, 0.06);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+      font-family: "Intel One Mono", "JetBrains Mono", ui-monospace, monospace;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      color: #2a8c4a;
+      pointer-events: none;
+      z-index: 600;
+    }
+    .gallery-live-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: #38c46c;
+      box-shadow: 0 0 0 0 rgba(56, 196, 108, 0.6);
+      animation: gallery-live-pulse 1.5s ease-in-out infinite;
+    }
+    @keyframes gallery-live-pulse {
+      0%, 100% {
+        box-shadow: 0 0 0 0 rgba(56, 196, 108, 0.55);
+        transform: scale(1);
+      }
+      50% {
+        box-shadow: 0 0 0 8px rgba(56, 196, 108, 0);
+        transform: scale(1.12);
+      }
+    }
+  `;
+  document.head.appendChild(style);
+
+  const el = document.createElement("div");
+  el.className = "gallery-live-indicator";
+  el.setAttribute("role", "status");
+  el.setAttribute("aria-label", "Live updates connected");
+  el.innerHTML = `
+    <span class="gallery-live-dot" aria-hidden="true"></span>
+    <span>Live</span>
+  `;
+  document.body.appendChild(el);
 }

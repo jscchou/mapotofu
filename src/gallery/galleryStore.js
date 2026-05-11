@@ -1,33 +1,25 @@
-// In-memory store + subscribe layer over a pluggable adapter.
-// Scene 7 calls addEntry. Scene 8 subscribes for live updates.
+// Thin facade over the gallery adapter. The adapter owns persistence
+// (localStorage) and cross-tab delivery (BroadcastChannel); this file
+// is just the consumer-facing API the rest of the app talks to.
 //
-// All entries (local + remote-via-BroadcastChannel) flow through `notify` so
-// subscribers don't need to care where the entry came from.
+// `subscribe` delegates straight to the adapter's BroadcastChannel
+// listener — both same-tab adds and cross-tab adds flow through the
+// same path, so subscribers fire exactly once per new entry regardless
+// of which tab originated it. The local-add direct-notify the file
+// used to do has been removed because it caused a duplicate fire on
+// the originating tab (the BroadcastChannel echoes to other in-tab
+// instances too, so callers heard the same add twice).
+//
+// `subscribe` keeps the legacy `{ entry, all }` payload shape so
+// existing callsites (main.js, galleryPage.js) don't need to change.
 
 import { localAdapter } from "./galleryAdapter.js";
 
 const adapter = localAdapter; // swap to a remote adapter when ready
 
-const listeners = new Set();
-function notify(entry, all) {
-  for (const l of listeners) {
-    try {
-      l({ entry, all });
-    } catch (e) {
-      console.error("galleryStore listener failed", e);
-    }
-  }
-}
-
-// Forward cross-tab additions to subscribers
-adapter.onEntryAdded((entry) => {
-  notify(entry, adapter.listEntries());
-});
-
 export const galleryStore = {
   addEntry(entry) {
     adapter.addEntry(entry);
-    notify(entry, adapter.listEntries());
   },
 
   getEntries() {
@@ -35,7 +27,8 @@ export const galleryStore = {
   },
 
   subscribe(cb) {
-    listeners.add(cb);
-    return () => listeners.delete(cb);
+    return adapter.subscribe((entry) => {
+      cb({ entry, all: adapter.listEntries() });
+    });
   },
 };

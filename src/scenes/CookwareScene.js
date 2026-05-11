@@ -227,19 +227,6 @@ export class CookwareScene {
       },
       onPick: (card, x, y) => this._grab(card, x, y, "hand"),
     });
-
-    // Reverse-drag picker: hover for 1s on the stove (when something
-    // is already on it) to lift the placed cookware off. Drag outside
-    // the stove → returns to its source card; drag stays inside → cancel.
-    this.stovePicker = new HandHoverPicker({
-      getHoveredTarget: (x, y) => {
-        if (!this._onStoveId) return null;
-        if (!this._overStove(x, y)) return null;
-        // Stable identifier so HandHoverPicker's anti-repeat lock works.
-        return this._onStoveId;
-      },
-      onPick: (_id, x, y) => this._grabFromStove(x, y, "hand"),
-    });
   }
 
   // ---------- lifecycle ----------
@@ -436,11 +423,15 @@ export class CookwareScene {
       label.position.set(layout.lblX, layout.lblY);
       this.cardsLayer.addChild(label);
 
+      // Hit area is the FULL card frame (not just the cookware image)
+      // so hand-cursor jitter doesn't have to thread the small image
+      // rect to start a dwell-pick. Mouse benefits too — clicking
+      // anywhere on a card now lifts the cookware.
       const hitRect = {
-        x: layout.imgX,
-        y: layout.imgY,
-        width: cw.cardImage.width,
-        height: cw.cardImage.height,
+        x: layout.cardX,
+        y: layout.cardY,
+        width: layout.cardW,
+        height: layout.cardH,
       };
 
       this.cards.set(layout.id, {
@@ -578,17 +569,13 @@ export class CookwareScene {
     const p = this._toDesign(x, y);
 
     if (this.grabbed) {
-      // Hand grab + hand went idle. Same flicker concern as the other
-      // scenes; snap back only if the loss persists.
+      // Hand grab + hand went idle. Snap back only if the loss
+      // persists past the grace window.
       if (this.grabbed.source === "hand" && source !== "hand") {
         const now = performance.now();
         this._handGoneSince = this._handGoneSince ?? now;
         if (now - this._handGoneSince > 600) {
-          if (this.grabbed.kind === "stove") {
-            this._cancelStoveGrab(this.grabbed);
-          } else {
-            this._snapGhostBack(this.grabbed.card, this.grabbed.ghost);
-          }
+          this._snapGhostBack(this.grabbed.card, this.grabbed.ghost);
           this.grabbed = null;
           this._handGoneSince = null;
           this._stoveActive = false;
@@ -603,19 +590,6 @@ export class CookwareScene {
       if (over !== this._stoveActive) {
         this._stoveActive = over;
         this.stoveGlow.visible = over;
-      }
-      if (this.grabbed.kind === "stove") {
-        // Reverse drag (stove → card): hand auto-fires put-back the
-        // moment the ghost leaves the stove area. Mouse waits for an
-        // explicit release.
-        if (this.grabbed.source === "hand" && !over) {
-          const g = this.grabbed;
-          this.grabbed = null;
-          this._stoveActive = false;
-          this.stoveGlow.visible = false;
-          this._putBackStoveCookware(g);
-        }
-        return;
       }
       // Forward drag (card → stove): hand grab auto-drops on stove
       // entry. Mouse keeps explicit release.
@@ -633,7 +607,6 @@ export class CookwareScene {
     this.buttons?.setEnabled("start", !!this._onStoveId);
     this.buttons?.pointerMove({ x: p.x, y: p.y, source });
     this.cardPicker?.pointerMove({ x: p.x, y: p.y, source });
-    this.stovePicker?.pointerMove({ x: p.x, y: p.y, source });
 
     if (p.x == null) {
       this._setStartHovered(false);
@@ -655,13 +628,6 @@ export class CookwareScene {
     // Mouse click-to-grab. Hand grabs via hover dwell instead.
     if (source !== "mouse") return;
 
-    // Reverse drag: a click anywhere on the stove (when something is
-    // on it) lifts that cookware first — wins over any underlying card.
-    if (this._onStoveId && this._overStove(p.x, p.y)) {
-      this._grabFromStove(p.x, p.y, "mouse");
-      return;
-    }
-
     const card = this._cardAt(p.x, p.y);
     if (!card) return;
     if (card.id === this._onStoveId) return;
@@ -671,27 +637,12 @@ export class CookwareScene {
 
   onPointerUp({ x, y, cancelled }) {
     if (!this.grabbed) return;
-    const g = this.grabbed;
+    const { card, ghost } = this.grabbed;
     this.grabbed = null;
     this._stoveActive = false;
     this.stoveGlow.visible = false;
 
     const p = this._toDesign(x, y);
-
-    // Reverse drag (stove → card): release outside stove = put back to
-    // its source card slot (stove empties); release inside stove =
-    // cancel (the cookware just settles back onto the burner).
-    if (g.kind === "stove") {
-      if (cancelled || p.x == null || !this._overStove(p.x, p.y)) {
-        this._putBackStoveCookware(g);
-      } else {
-        this._cancelStoveGrab(g);
-      }
-      return;
-    }
-
-    // Forward drag (card → stove): existing behavior unchanged.
-    const { card, ghost } = g;
     if (cancelled || p.x == null || !this._overStove(p.x, p.y)) {
       this._snapGhostBack(card, ghost);
       return;
@@ -726,8 +677,7 @@ export class CookwareScene {
   getPointerDwell() {
     return Math.max(
       this.buttons?.getDwellProgress() ?? 0,
-      this.cardPicker?.getDwellProgress() ?? 0,
-      this.stovePicker?.getDwellProgress() ?? 0
+      this.cardPicker?.getDwellProgress() ?? 0
     );
   }
   getState() {
@@ -766,67 +716,7 @@ export class CookwareScene {
     ghost.position.set(designX, designY);
     this.dragLayer.addChild(ghost);
 
-    this.grabbed = { card, ghost, source, kind: "card" };
-  }
-
-  // Lift the cookware that's currently on the stove back into a
-  // follow-the-cursor ghost. The on-stove sprite is hidden (not
-  // destroyed) for the duration of the drag — if the player drops
-  // back on the stove we just restore visibility, no swap.
-  _grabFromStove(designX, designY, source = "mouse") {
-    if (!this._onStoveId) return;
-    const card = this.cards.get(this._onStoveId);
-    if (!card || !card.sprite.texture) return;
-    itemPickup();
-
-    this.onStoveSprite.visible = false;
-
-    const ghost = new Container();
-    const tex = card.sprite.texture;
-    const sp = new Sprite(tex);
-    sp.anchor.set(0.5);
-    sp.width = card.cookware.cardImage.width;
-    sp.height = card.cookware.cardImage.height;
-    const shadow = new Graphics()
-      .ellipse(0, 18, 60, 12)
-      .fill({ color: 0x000000, alpha: 0.25 });
-    shadow.filters = [new BlurFilter({ strength: 8 })];
-    ghost.addChild(shadow, sp);
-    ghost.scale.set(1.05);
-    ghost.position.set(designX, designY);
-    this.dragLayer.addChild(ghost);
-
-    this.grabbed = { card, ghost, source, kind: "stove" };
-  }
-
-  // Commit a stove → card reverse drag: empty the stove, restore the
-  // card visually, snap the ghost back to its slot, and clear the
-  // selectedCookware in the shared store so the Start button re-greys.
-  // Caller is responsible for clearing this.grabbed first.
-  _putBackStoveCookware(g) {
-    const { card, ghost } = g;
-    const removedId = this._onStoveId;
-
-    this._onStoveId = null;
-    this.onStoveSprite.visible = false;
-    card.frame.alpha = 1;
-    card.label.alpha = 1;
-    card.sprite.visible = true;
-
-    this._snapGhostBack(card, ghost);
-    this._drawStartBtn();
-
-    if (cookingStore.getState().selectedCookware === removedId) {
-      cookingStore.setSelectedCookware(null);
-    }
-  }
-
-  // Cancel a stove reverse drag: just put the on-stove sprite back and
-  // toss the ghost. No state mutation — _onStoveId stays as it was.
-  _cancelStoveGrab(g) {
-    this.onStoveSprite.visible = true;
-    g.ghost.parent?.removeChild(g.ghost);
-    g.ghost.destroy({ children: true });
+    this.grabbed = { card, ghost, source };
   }
 
   _snapGhostBack(card, ghost) {

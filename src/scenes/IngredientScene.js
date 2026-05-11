@@ -250,6 +250,36 @@ export class IngredientScene {
   onEnter() {}
   onExit() {}
 
+  // External hook for the "Start Over" button on the Results scene.
+  // The cookingStore reset is handled by main.js — this method clears
+  // the basket sprites + drag state that aren't backed by the store
+  // so a fresh playthrough doesn't carry over the previous run's
+  // visual residue.
+  _clearLocalState() {
+    for (const item of this.basketItems) {
+      item.sprite.parent?.removeChild(item.sprite);
+      item.sprite.destroy({ children: true });
+    }
+    this.basketItems = [];
+    if (this.grabbed?.ghost) {
+      this.grabbed.ghost.parent?.removeChild(this.grabbed.ghost);
+      this.grabbed.ghost.destroy({ children: true });
+    }
+    this.grabbed = null;
+    this._basketActive = false;
+    this.basketGlow.visible = false;
+    this._handGoneSince = null;
+    this._lastHoveredTileId = null;
+    // Refresh the tile selection visuals (un-dim everything) and
+    // re-evaluate the Continue button so it greys back out.
+    this._refreshSelectedTiles();
+    this._updateContinueState();
+    // Cancel any in-progress hover dwells so the basket-picker
+    // doesn't fire mid-reset.
+    this.tilePicker?.cancel();
+    this.basketPicker?.cancel();
+  }
+
   // External hook so main.js can flip the recipe button label when
   // the shared traditionalRecipeOpen state changes.
   setRecipeOpen(open) {

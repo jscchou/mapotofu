@@ -355,6 +355,17 @@ async function bootMainApp() {
       });
     },
     onOpenCollection: () => setScene(collectionScene),
+    onStartOver: () => {
+      // Wipe scene-local visual state that the cookingStore doesn't
+      // own (basket sprites, pan sprites, in-flight grab ghosts) so
+      // the next playthrough starts on a clean canvas. Then reset the
+      // store — savedDishes + traditionalRecipeOpen are preserved by
+      // cookingStore.reset() — and route back to Scene 1.
+      ingredientScene._clearLocalState?.();
+      cookingScene._clearLocalState?.();
+      cookingStore.reset();
+      setScene(startScene);
+    },
   });
 
   const collectionScene = new CollectionScene({

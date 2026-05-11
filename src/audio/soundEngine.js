@@ -483,3 +483,98 @@ export function newGalleryEntry() {
   if (!isReady()) return;
   chimeNote(880, 300, 0, 0.25);
 }
+
+// ---------- Plating-page cooking loop ----------
+//
+// Looping ambient sound for the CookingAnimationScene loader: a quiet
+// bandpass-filtered noise track (the "sizzle"), with periodic short
+// sine-wave pops layered on top (the "bubbles"). Stops cleanly when
+// the dish reveals or the player navigates away.
+//
+// Implementation notes:
+//   - Both noise + bubbles use the existing masterGain so the mute
+//     toggle silences them like any other sound.
+//   - Bubble scheduling uses recursive setTimeout (not setInterval) so
+//     stopCookingLoop() reliably halts it — the scheduler bails as
+//     soon as `_loopActive` flips false.
+//   - Idempotent start (no-op if already running) so a re-fetch on
+//     the plating screen doesn't stack two simultaneous loops.
+
+let _loopActive = false;
+let _loopHandle = null;
+
+export function startCookingLoop() {
+  if (!ensureContext()) return;
+  if (_loopActive) return;
+  _loopActive = true;
+
+  // Resume the context if it's still suspended — startCookingLoop is
+  // typically called inside a scene-enter handler, which on first
+  // boot may run before the user's first gesture. Without this, the
+  // loop would silently fail to play.
+  if (ctx.state === "suspended") {
+    ctx.resume().catch(() => {});
+  }
+
+  const t0 = now();
+
+  // Sizzle: continuous bandpass-filtered noise. Quiet baseline so
+  // it doesn't compete with the bubble pops layered on top.
+  const sizzle = makeNoiseSource();
+  const sizzleFilter = ctx.createBiquadFilter();
+  sizzleFilter.type = "bandpass";
+  sizzleFilter.frequency.setValueAtTime(1300, t0);
+  sizzleFilter.Q.setValueAtTime(0.6, t0);
+  const sizzleGain = makeGain(0);
+  sizzleGain.gain.linearRampToValueAtTime(0.05, t0 + 0.4);
+  sizzle.connect(sizzleFilter).connect(sizzleGain).connect(masterGain);
+  sizzle.start(t0);
+
+  _loopHandle = { sizzle, sizzleGain };
+
+  // Schedule the first bubble after a short delay so the loop has
+  // already started its sizzle when the first pop hits.
+  scheduleNextBubble(220);
+}
+
+function scheduleNextBubble(delayMs) {
+  setTimeout(() => {
+    if (!_loopActive) return;
+    bubblePop();
+    scheduleNextBubble(220 + Math.random() * 380);
+  }, delayMs);
+}
+
+function bubblePop() {
+  if (!isReady()) return;
+  const t0 = now();
+  // Short sine pop with a tiny pitch slide upward — sounds like the
+  // surface tension of a bubble snapping rather than a generic blip.
+  const startFreq = 220 + Math.random() * 360;
+  const o = makeOsc(startFreq, "sine");
+  o.frequency.setValueAtTime(startFreq, t0);
+  o.frequency.exponentialRampToValueAtTime(startFreq * 1.6, t0 + 0.06);
+  const g = makeGain(0);
+  const peak = 0.06 + Math.random() * 0.05;
+  g.gain.linearRampToValueAtTime(peak, t0 + 0.005);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.16);
+  o.connect(g).connect(masterGain);
+  o.start(t0);
+  o.stop(t0 + 0.18);
+}
+
+export function stopCookingLoop() {
+  if (!_loopActive) return;
+  _loopActive = false;
+  if (!_loopHandle || !ctx) return;
+  const t0 = now();
+  const { sizzle, sizzleGain } = _loopHandle;
+  // Fade the sizzle out over 250 ms so it doesn't end with a pop.
+  sizzleGain.gain.cancelScheduledValues(t0);
+  sizzleGain.gain.setValueAtTime(sizzleGain.gain.value, t0);
+  sizzleGain.gain.linearRampToValueAtTime(0.0001, t0 + 0.25);
+  try {
+    sizzle.stop(t0 + 0.3);
+  } catch {}
+  _loopHandle = null;
+}

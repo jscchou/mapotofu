@@ -12,7 +12,12 @@ import { generateDishImage } from "../cooking/imageApi.js";
 import { ingredients as INGREDIENT_DATA } from "../data/ingredients.js";
 import { mountCookingLoader } from "../ui/CookingLoader.js";
 import { HandButtonDwell } from "../input/HandButtonDwell.js";
-import { buttonClick, imageReveal } from "../audio/soundEngine.js";
+import {
+  buttonClick,
+  imageReveal,
+  startCookingLoop,
+  stopCookingLoop,
+} from "../audio/soundEngine.js";
 
 // Build the request body for /api/generate-dish from the shared store.
 // Walks the pot in drag-order, splits items into the four buckets the
@@ -143,12 +148,17 @@ export class CookingAnimationScene {
   _mountLoader() {
     if (this._loader) return;
     this._loader = mountCookingLoader();
+    // Ambient sizzle + bubble pops while the API generates the dish.
+    // Tied to the loader's lifetime so it stops the moment we
+    // unmount (reveal / error / exit).
+    startCookingLoop();
   }
 
   _unmountLoader() {
     if (!this._loader) return;
     this._loader.unmount();
     this._loader = null;
+    stopCookingLoop();
   }
 
   // ---------- build ----------

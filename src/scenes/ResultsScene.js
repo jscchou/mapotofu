@@ -81,6 +81,19 @@ const ADD_BTN = {
   r: 40,
 };
 
+// Secondary button: bottom-center, below the dish + recipe cards
+// (right card bottom ≈ y=963), so it sits in the empty band beneath
+// both cards but still well above the canvas floor. Outlined pill,
+// transparent fill, brown text — visually quieter than the primary
+// yellow Add to Collection button while staying a clear dwell target.
+const START_OVER_BTN = {
+  cx: CANVAS.w / 2,
+  cy: 1020,
+  w: 200,
+  h: 54,
+  r: 27,
+};
+
 function pointInRect(px, py, r) {
   return px >= r.x && px <= r.x + r.width && py >= r.y && py <= r.y + r.height;
 }
@@ -96,10 +109,12 @@ export class ResultsScene {
     onBack,
     onAddToCollection,
     onOpenCollection,
+    onStartOver,
   } = {}) {
     this.onBack = onBack ?? (() => {});
     this.onAddToCollection = onAddToCollection ?? (() => {});
     this.onOpenCollection = onOpenCollection ?? (() => {});
+    this.onStartOver = onStartOver ?? (() => {});
 
     this.root = new Container();
     this.root.label = "ResultsScene";
@@ -114,6 +129,7 @@ export class ResultsScene {
     this._scale = 1;
     this._addHovered = false;
     this._collectionHovered = false;
+    this._startOverHovered = false;
 
     // DOM overlay for the editable transcription
     this._formWrapper = null;
@@ -124,6 +140,7 @@ export class ResultsScene {
     this._buildLeftCard();
     this._buildRightCard();
     this._buildAddToCollection();
+    this._buildStartOver();
 
     // Hand-hover-to-press for every button. Mouse still gets instant clicks.
     this.buttons = new HandButtonDwell();
@@ -141,6 +158,14 @@ export class ResultsScene {
       () => {
         buttonClick();
         this.onOpenCollection();
+      }
+    );
+    this.buttons.register(
+      "startOver",
+      (x, y) => this._inStartOverBtn(x, y),
+      () => {
+        buttonClick();
+        this.onStartOver();
       }
     );
     this.buttons.register(
@@ -377,6 +402,41 @@ export class ResultsScene {
       .fill(this._addHovered ? COLORS.yellowBtnHover : COLORS.yellowBtn);
   }
 
+  // Secondary "Start Over" — outlined pill, no fill so it visually
+  // recedes against the primary yellow Add button. Lives top-left
+  // below the back arrow.
+  _buildStartOver() {
+    this.startOverBtn = new Container();
+    this.startOverBtn.label = "StartOverBtn";
+    this.startOverBtn.position.set(START_OVER_BTN.cx, START_OVER_BTN.cy);
+    this.startOverBtnBg = new Graphics();
+    this.startOverBtnLabel = new Text({
+      text: "Start Over",
+      style: new TextStyle({
+        fontFamily: FONT.lato,
+        fontWeight: "700",
+        fontSize: 18,
+        fill: COLORS.brown,
+      }),
+    });
+    this.startOverBtnLabel.anchor.set(0.5, 0.5);
+    this.startOverBtn.addChild(this.startOverBtnBg, this.startOverBtnLabel);
+    this._drawStartOverBtn();
+    this.uiLayer.addChild(this.startOverBtn);
+  }
+
+  _drawStartOverBtn() {
+    const { w, h, r } = START_OVER_BTN;
+    const fill = this._startOverHovered
+      ? { color: 0xffffff, alpha: 0.45 }
+      : { color: 0xffffff, alpha: 0 };
+    this.startOverBtnBg
+      .clear()
+      .roundRect(-w / 2, -h / 2, w, h, r)
+      .fill(fill)
+      .stroke({ color: COLORS.brown, width: 1.5 });
+  }
+
   // ---------- editable transcription overlay ----------
 
   // Build a chronological text block of every cooking action — both
@@ -488,10 +548,12 @@ export class ResultsScene {
     if (p.x == null) {
       this._setAddHovered(false);
       this._setCollectionHovered(false);
+      this._setStartOverHovered(false);
       return;
     }
     this._setAddHovered(this._inAddBtn(p.x, p.y));
     this._setCollectionHovered(this._inCollectionBtn(p.x, p.y));
+    this._setStartOverHovered(this._inStartOverBtn(p.x, p.y));
   }
 
   onPointerDown(state) {
@@ -544,10 +606,24 @@ export class ResultsScene {
     });
   }
 
+  _inStartOverBtn(x, y) {
+    return pointInRect(x, y, {
+      x: START_OVER_BTN.cx - START_OVER_BTN.w / 2,
+      y: START_OVER_BTN.cy - START_OVER_BTN.h / 2,
+      width: START_OVER_BTN.w,
+      height: START_OVER_BTN.h,
+    });
+  }
+
   _setAddHovered(v) {
     if (v === this._addHovered) return;
     this._addHovered = v;
     this._drawAddBtn();
+  }
+  _setStartOverHovered(v) {
+    if (v === this._startOverHovered) return;
+    this._startOverHovered = v;
+    this._drawStartOverBtn();
   }
   _setCollectionHovered(v) {
     if (v === this._collectionHovered) return;
